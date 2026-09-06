@@ -1,0 +1,59 @@
+# ==============================================================================
+# .gitignore for VEO3_AUTO
+# ==============================================================================
+
+# --- 1. SENSITIVE CREDENTIALS & NETWORK CAPTURES (BẢO MẬT TUYỆT ĐỐI) ---
+# Chứa Telegram Bot Token & Chat ID thật (dùng config.example.json để chia sẻ mẫu)
+config.json
+# File HAR ghi lại traffic mạng chứa Session Cookies & Bearer Tokens của ChatGPT/Google
+request/
+*.har
+.env
+.env.*
+
+# --- 2. LARGE MEDIA & DATASETS (DỮ LIỆU ẢNH NẶNG ~5GB) ---
+# Không đẩy ảnh raw, ảnh crop và thư viện texture render hàng gigabyte lên Git
+textures_raw/
+textures_cropped/
+textures/
+textures_old/
+output/
+output_old/
+
+# --- 3. PYINSTALLER & BINARIES (FILE ĐÓNG GÓI EXE) ---
+dist/
+build/
+*.exe
+*.spec
+
+# --- 4. RUNTIME LOGS, STATUS & LOCKS (TIẾN ĐỘ CHẠY CỤC BỘ) ---
+status.json
+status_*.json
+*.lock
+.run_batch.lock
+logs/
+
+# --- 5. PYTHON & ENV CACHES ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.so
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# --- 6. IDE & OPERATING SYSTEM ARTIFACTS ---
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.temp
+scratch_*.png

@@ -1,0 +1,57 @@
+{
+    "FD-01": {
+        "id": "FD-01",
+        "description": "Một gợn chéo thấp từ trái dưới lên phải trên; an toàn cho hầu hết loại vải.",
+        "prompt": "Create one broad, very shallow diagonal ripple extending from the lower-left toward the upper-right. Give it one softly rounded low crest and an extremely subtle adjacent valley. Let it fade gradually before reaching the corners. Keep approximately 85% of the visible fabric nearly flat."
+    },
+    "FD-02": {
+        "id": "FD-02",
+        "description": "Một gợn chéo thấp theo hướng ngược lại để thay đổi bố cục.",
+        "prompt": "Create one broad, very shallow diagonal ripple extending from the upper-left toward the lower-right. Position it slightly off-centre and keep it asymmetrical. Let both ends fade smoothly into the surface. Keep approximately 85% of the visible fabric nearly flat."
+    },
+    "FD-03": {
+        "id": "FD-03",
+        "description": "Một gợn cong nhẹ, tự nhiên hơn đường chéo thẳng.",
+        "prompt": "Create one broad, shallow curved ripple entering from the lower-left edge, bending gently through the central area and fading toward the upper-right. Form one continuous relaxed curve, not several waves. Keep the areas on both sides broad and nearly flat."
+    },
+    "FD-05": {
+        "id": "FD-05",
+        "description": "Một gợn thấp nằm ở một phần ba phía dưới; phần trên gần phẳng.",
+        "prompt": "Keep the upper two-thirds of the fabric almost completely flat. Add one broad, very shallow horizontal-to-diagonal ripple across the lower third. Give it one irregular natural curve, one low rounded crest and only a faint adjacent valley."
+    },
+    "FD-06": {
+        "id": "FD-06",
+        "description": "Một gợn thấp nằm ở một phần ba phía trên; phần dưới gần phẳng.",
+        "prompt": "Keep the lower two-thirds of the fabric almost completely flat. Add one broad, low ripple across the upper third. Make it slightly diagonal and asymmetrical, then fade it smoothly into the surrounding flat fabric."
+    },
+    "FD-07": {
+        "id": "FD-07",
+        "description": "Một vùng nâng rất nhẹ đi vào từ mép trái.",
+        "prompt": "Create one broad, extremely shallow elevation entering from the left edge. Place one low rounded crest near the left-centre and fade it completely before it reaches the right half. Keep the centre-right area nearly flat and do not create any secondary fold."
+    },
+    "FD-08": {
+        "id": "FD-08",
+        "description": "Một vùng nâng rất nhẹ đi vào từ mép phải.",
+        "prompt": "Create one broad, extremely shallow elevation entering from the right edge. Place one low rounded crest near the right-centre and let it flatten gradually toward the centre-left. Keep the opposite side nearly flat and do not create any secondary fold."
+    },
+    "FD-09": {
+        "id": "FD-09",
+        "description": "Một dốc chéo nông đi vào từ vùng mép trên bên phải, không nâng hoặc túm góc.",
+        "prompt": "Create one broad, extremely shallow diagonal slope entering from the upper-right edge and fading completely before reaching the centre-left. Keep the corner itself relaxed and nearly flat. Do not lift, pinch or gather the corner, and do not create a pointed peak or secondary fold."
+    },
+    "FD-10": {
+        "id": "FD-10",
+        "description": "Một dốc chéo nông đi vào từ vùng mép dưới bên trái, không nâng hoặc túm góc.",
+        "prompt": "Create one broad, extremely shallow diagonal slope entering from the lower-left edge and fading completely before reaching the centre-right. Keep the corner itself relaxed and nearly flat. Do not lift, pinch or gather the corner, and do not create a pointed peak or secondary fold."
+    },
+    "FD-13": {
+        "id": "FD-13",
+        "description": "Một nếp thấp đi từ mép vào rồi biến mất trước khi chạy hết ảnh.",
+        "prompt": "Create one broad, low diagonal ridge entering from one edge and gradually losing height until it disappears around two-thirds of the way across the image. Keep the ridge shallow, rounded and asymmetrical. It must not continue from edge to edge or generate a second ridge."
+    },
+    "FD-14": {
+        "id": "FD-14",
+        "description": "Một vùng lõm chéo rất nông thay cho nếp nổi.",
+        "prompt": "Create one broad, very shallow diagonal depression with softly sloping sides. Keep the valley light, open and gradual, with no dark crease and no raised parallel ridges beside it. Keep the surrounding fabric nearly flat."
+    }
+}
