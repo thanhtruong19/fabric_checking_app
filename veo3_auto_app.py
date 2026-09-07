@@ -1,5 +1,7 @@
 import datetime
+import gzip
 import html
+import io
 import json
 import os
 import re
@@ -16,7 +18,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 
 APP_TITLE = "VEO3 Auto Pipeline"
@@ -35,6 +37,14 @@ SUPPORTED_IMAGE_EXTENSIONS = {
     ".bmp",
     ".tif",
     ".tiff",
+}
+
+EMBED_ORIGIN = "https://dunniotailor.com"
+EMBED_PREFIX = "/embed"
+EMBED_STRIPPED_RESPONSE_HEADERS = {
+    "connection", "content-encoding", "content-length",
+    "content-security-policy", "content-security-policy-report-only",
+    "strict-transport-security", "transfer-encoding", "x-frame-options",
 }
 
 
@@ -517,16 +527,21 @@ INDEX_HTML = r"""<!doctype html>
     }
     /* Output quality tab: keep styles isolated from existing screens. */
     #tab-quality { display: grid; gap: 14px; }
+    #tab-quality .quality-workspace { display: grid; grid-template-columns: minmax(190px, 20%) minmax(0, 80%); gap: 14px; min-height: 68vh; }
+    #tab-quality .quality-browser-card { min-width: 0; display: flex; flex-direction: column; }
+    #tab-quality .quality-browser-frame { width: 100%; flex: 1; min-height: 640px; border: 1px solid var(--line); border-radius: 10px; background: white; }
     #tab-quality .quality-field + .quality-field { margin-top: 14px; }
     #tab-quality .quality-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-    #tab-quality .quality-folders { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    #tab-quality .quality-folders { display: flex; flex-direction: column; align-items: stretch; gap: 7px; margin-top: 10px; }
     #tab-quality .quality-folder { max-width: 100%; overflow-wrap: anywhere; }
+    #tab-quality .quality-folder.active { color: white; background: var(--blue); border-color: #3b82f6; }
+    #tab-quality .quality-workspace > .card:first-child { min-width: 0; min-height: 700px; display: flex; flex-direction: column; }
     #tab-quality .quality-gallery {
-      height: 40vh; min-height: 260px; overflow-y: auto; overscroll-behavior: contain;
+      height: auto; min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain;
       scrollbar-gutter: stable; border: 1px solid var(--line); border-radius: 10px;
       background: #081321; padding: 12px;
     }
-    #tab-quality .quality-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    #tab-quality .quality-grid { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; width: 100%; gap: 12px; }
     #tab-quality .quality-image { min-width: 0; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
     #tab-quality .quality-image { cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
     #tab-quality .quality-image:hover, #tab-quality .quality-image:focus { border-color: var(--cyan); transform: translateY(-2px); outline: none; box-shadow: 0 8px 22px rgba(0,0,0,.25); }
@@ -540,6 +555,10 @@ INDEX_HTML = r"""<!doctype html>
     #tab-quality .quality-errors.has-errors { color: var(--red); border-color: #9f1239; }
     @media(max-width: 480px) {
       #tab-quality .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    }
+    @media(max-width: 900px) {
+      #tab-quality .quality-workspace { grid-template-columns: 1fr; }
+      #tab-quality .quality-browser-frame { min-height: 70vh; }
     }
   </style>
 </head>
@@ -978,23 +997,29 @@ INDEX_HTML = r"""<!doctype html>
       <h2>🔍 Kiểm thử chất lượng output vải</h2>
       <div class="quality-field">
         <label for="quality-website">Link trang web mục tiêu</label>
-        <input id="quality-website" type="text" inputmode="url" placeholder="https://example.com" aria-describedby="quality-website-hint" onblur="validateQualityWebsite()">
-        <div id="quality-website-hint" class="hint">Bấm vào một ảnh bên dưới để đưa file đó vào ô Choose File của trang web này.</div>
+        <input id="quality-website" type="text" inputmode="url" value="https://dunniotailor.com/3d-custom-outfit/suits.html" aria-describedby="quality-website-hint" readonly>
+        <div id="quality-website-hint" class="hint">Website Dunnio được tải qua proxy nội bộ để hiển thị và nhận ảnh ngay trong app.</div>
       </div>
       <div class="quality-field">
         <label>Folder vải</label>
         <div class="quality-toolbar">
           <button id="quality-folder-button" type="button" class="primary" onclick="selectQualityFolder()">📁 Chọn folder vải</button>
-          <span class="hint">Có thể chọn thêm từng folder; ảnh trong các folder con cũng được hiển thị.</span>
+          <span class="hint">Các folder con có ảnh sẽ hiện bên dưới; folder đầu tiên được mở mặc định.</span>
         </div>
         <div id="quality-folders" class="quality-folders" aria-label="Folder đã chọn"></div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-header-flex"><h2>Ảnh output mẫu vải</h2><span id="quality-count" class="badge" role="status">0 ảnh</span></div>
-      <div class="quality-gallery" tabindex="0" aria-label="Danh sách ảnh mẫu vải có thể cuộn">
-        <div id="quality-empty" class="quality-empty"><strong>Chưa có ảnh mẫu vải</strong><span>Chọn folder vải để xem các ảnh output tại đây.</span></div>
-        <div id="quality-grid" class="quality-grid"></div>
+    <div class="quality-workspace">
+      <div class="card">
+        <div class="card-header-flex"><h2>Ảnh output mẫu vải</h2><span id="quality-count" class="badge" role="status">0 ảnh</span></div>
+        <div class="quality-gallery" tabindex="0" aria-label="Danh sách ảnh mẫu vải có thể cuộn">
+          <div id="quality-empty" class="quality-empty"><strong>Chưa có ảnh mẫu vải</strong><span>Chọn folder vải để xem các ảnh output tại đây.</span></div>
+          <div id="quality-grid" class="quality-grid"></div>
+        </div>
+      </div>
+      <div class="card quality-browser-card">
+        <div class="card-header-flex"><h2>Trang kiểm thử Dunnio Tailor</h2><button type="button" class="ghost btn-sm" onclick="reloadQualityFrame()">Tải lại</button></div>
+        <iframe id="quality-website-frame" class="quality-browser-frame" src="https://dunniotailor.com/3d/suits?key=123456789" title="Dunnio Tailor"></iframe>
       </div>
     </div>
     <div class="card">
@@ -1495,6 +1520,8 @@ const qualityImages = new Map();
 const qualityErrors = [];
 let qualityUploading = false;
 let selectedQualityItem = null;
+let qualityFolderGroups = [];
+let activeQualityFolderIndex = -1;
 function addQualityError(message) {
   qualityErrors.push(message);
   if (qualityErrors.length > 100) qualityErrors.shift();
@@ -1522,25 +1549,6 @@ function validateQualityWebsite() {
 function updateQualitySummary() {
   $('quality-count').textContent = `${qualityImages.size} ảnh`;
   $('quality-empty').classList.toggle('hidden', qualityImages.size > 0);
-  const folders = new Set([...qualityImages.values()].map(item => item.folder));
-  $('quality-folders').replaceChildren();
-  for (const folder of folders) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'ghost btn-sm quality-folder';
-    button.textContent = `${folder} ×`;
-    button.setAttribute('aria-label', `Bỏ folder ${folder}`);
-    button.onclick = () => {
-      for (const [key, item] of qualityImages) {
-        if (item.folder !== folder) continue;
-        if (selectedQualityItem === item) selectedQualityItem = null;
-        item.node.remove();
-        qualityImages.delete(key);
-      }
-      updateQualitySummary();
-    };
-    $('quality-folders').append(button);
-  }
 }
 async function selectQualityFolder() {
   const button = $('quality-folder-button');
@@ -1548,16 +1556,46 @@ async function selectQualityFolder() {
   try {
     const result = await api('/api/select-quality-folder', {});
     if (!result.path) return;
-    addQualityFolder(result);
+    qualityFolderGroups = result.folders || [];
+    renderQualityFolderButtons();
+    if (qualityFolderGroups.length) showQualityFolder(0);
+    else {
+      clearQualityImages();
+      addQualityError('Folder đã chọn không chứa file ảnh được hỗ trợ.');
+    }
   } catch (error) {
     addQualityError(error.message);
   } finally {
     button.disabled = false;
   }
 }
-function addQualityFolder(result) {
-  const images = result.images || [];
-  if (!images.length) return addQualityError('Folder đã chọn không chứa file ảnh được hỗ trợ.');
+function clearQualityImages() {
+  qualityImages.clear();
+  selectedQualityItem = null;
+  $('quality-grid').replaceChildren();
+  updateQualitySummary();
+}
+function renderQualityFolderButtons() {
+  const container = $('quality-folders');
+  container.replaceChildren();
+  qualityFolderGroups.forEach((folder, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghost btn-sm quality-folder';
+    button.textContent = `${folder.name} (${folder.images.length})`;
+    button.title = folder.path;
+    button.onclick = () => showQualityFolder(index);
+    folder.button = button;
+    container.append(button);
+  });
+}
+function showQualityFolder(index) {
+  if (index < 0 || index >= qualityFolderGroups.length) return;
+  activeQualityFolderIndex = index;
+  qualityFolderGroups.forEach((folder, position) => folder.button?.classList.toggle('active', position === index));
+  clearQualityImages();
+  const folder = qualityFolderGroups[index];
+  const images = folder.images || [];
   const fragment = document.createDocumentFragment();
   for (const file of images) {
     const path = file.relative_path || file.name;
@@ -1581,7 +1619,7 @@ function addQualityFolder(result) {
       const caption = document.createElement('figcaption');
       caption.textContent = path;
       node.append(img, caption);
-      const item = {path: file.path, folder: result.path, node};
+      const item = {path: file.path, name: file.name, folder: folder.path, node};
       node.onclick = () => uploadQualityImage(item);
       node.onkeydown = event => {
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); uploadQualityImage(item); }
@@ -1607,10 +1645,26 @@ async function uploadQualityImage(item) {
   item.node.classList.add('uploading');
   $('quality-count').textContent = 'Đang gửi ảnh...';
   try {
-    const result = await api('/api/upload-quality-image', {
-      target_url: $('quality-website').value.trim(), image_path: item.path
+    const frame = $('quality-website-frame');
+    const response = await fetch('/api/quality-image?path=' + encodeURIComponent(item.path), {cache: 'no-store'});
+    if (!response.ok) throw new Error('Không đọc được file ảnh đã chọn.');
+    const blob = await response.blob();
+    const file = new File([blob], item.name, {type: blob.type || 'application/octet-stream'});
+    const frameDocument = frame.contentDocument;
+    if (!frameDocument) throw new Error('Trang kiểm thử chưa tải xong.');
+    const inputs = [...frameDocument.querySelectorAll('input[type="file"]:not([disabled])')];
+    const input = inputs.find(node => {
+      const accepts = (node.accept || '').toLowerCase();
+      return !accepts || accepts.includes('image') || accepts.includes('.png') || accepts.includes('.jpg');
     });
-    $('quality-count').textContent = `Đã gửi ${result.file_name}`;
+    if (!input) throw new Error('Trang web trong iframe không có ô Choose File nhận ảnh.');
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('input', {bubbles: true}));
+    input.dispatchEvent(new Event('change', {bubbles: true}));
+    if (!input.files || input.files[0]?.name !== item.name) throw new Error('Trang web chưa nhận đúng file ảnh đã chọn.');
+    $('quality-count').textContent = `Đã gửi ${item.name}`;
   } catch (error) {
     addQualityError(error.message);
     updateQualitySummary();
@@ -1618,6 +1672,10 @@ async function uploadQualityImage(item) {
     qualityUploading = false;
     item.node.classList.remove('uploading');
   }
+}
+function reloadQualityFrame() {
+  const frame = $('quality-website-frame');
+  const url = new URL(frame.src); url.searchParams.set('reload', Date.now()); frame.src = url.href;
 }
 
 let activeTab = 'dashboard';
@@ -4005,7 +4063,7 @@ def fabric_progress(project_dir, config, folder_filter=None):
 
 
 def choose_local_folder(initial_dir=None):
-    """Open the native directory picker used by the local desktop app."""
+    """Open a modern Explorer-style picker with address bar and search."""
     initial = str(Path(initial_dir).resolve()) if initial_dir and safe_is_dir(initial_dir) else ""
     script = (
         "Add-Type -AssemblyName System.Windows.Forms;"
@@ -4016,12 +4074,17 @@ def choose_local_folder(initial_dir=None):
         "$owner.Size=New-Object System.Drawing.Size(1,1);"
         "$owner.Opacity=0;"
         "$owner.Show();$owner.Activate();"
-        "$dialog=New-Object System.Windows.Forms.FolderBrowserDialog;"
-        "$dialog.Description='Chọn thư mục ảnh vải local';"
-        "if($args[0]){$dialog.SelectedPath=$args[0]};"
-        "$dialog.ShowNewFolderButton=$false;"
+        "$dialog=New-Object System.Windows.Forms.OpenFileDialog;"
+        "$dialog.Title='Chọn thư mục ảnh vải';"
+        "$dialog.Filter='Thư mục|*.folder';"
+        "$dialog.CheckFileExists=$false;$dialog.CheckPathExists=$true;"
+        "$dialog.ValidateNames=$false;$dialog.DereferenceLinks=$true;"
+        "$dialog.FileName='__Chọn thư mục này__';"
+        "if($args[0]){$dialog.InitialDirectory=$args[0]};"
         "try{if($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK){"
-        "[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $dialog.SelectedPath}}"
+        "$selected=$dialog.FileName;"
+        "if(-not [IO.Directory]::Exists($selected)){$selected=[IO.Path]::GetDirectoryName($selected)};"
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $selected}}"
         "finally{$owner.Close();$owner.Dispose()}"
     )
     completed = subprocess.run(
@@ -4054,6 +4117,25 @@ def list_quality_images(folder):
                 }
             )
     return images
+
+
+def list_quality_folder_groups(folder):
+    """List immediate child folders and the images belonging to each child."""
+    root = Path(folder).resolve()
+    children = sorted(
+        (path for path in root.iterdir() if path.is_dir()),
+        key=lambda item: item.name.casefold(),
+    )
+    groups = []
+    for child in children:
+        images = list_quality_images(child)
+        if images:
+            groups.append({"name": child.name, "path": str(child.resolve()), "images": images})
+    if not groups:
+        images = list_quality_images(root)
+        if images:
+            groups.append({"name": root.name, "path": str(root), "images": images})
+    return groups
 
 
 def choose_prompt_file(initial_path=None):
@@ -4449,12 +4531,12 @@ class PipelineController:
     def select_quality_folder(self):
         selected = choose_local_folder()
         if not selected:
-            return {"path": "", "images": []}
+            return {"path": "", "folders": []}
         root = Path(selected).resolve()
-        images = list_quality_images(root)
+        folders = list_quality_folder_groups(root)
         with self.lock:
             self.quality_folders.add(root)
-        return {"path": str(root), "images": images}
+        return {"path": str(root), "folders": folders}
 
     def resolve_quality_image(self, image_path):
         candidate = Path(str(image_path or "")).resolve()
@@ -5988,9 +6070,65 @@ class AppHandler(BaseHTTPRequestHandler):
             raise ValueError("Request phải là JSON object.")
         return value
 
+    def proxy_embed(self):
+        """Proxy Dunnio under /embed so the parent page can access the iframe DOM."""
+        suffix = self.path[len(EMBED_PREFIX):] or "/"
+        target_url = urljoin(EMBED_ORIGIN + "/", suffix.lstrip("/"))
+        body = None
+        content_length = self.headers.get("Content-Length")
+        if content_length:
+            body = self.rfile.read(int(content_length))
+        request = urllib.request.Request(target_url, data=body, method=self.command)
+        for name in ("User-Agent", "Accept", "Accept-Language", "Cookie", "Content-Type", "Origin", "Referer"):
+            value = self.headers.get(name)
+            if value:
+                if name == "Origin":
+                    value = EMBED_ORIGIN
+                elif name == "Referer" and EMBED_PREFIX in value:
+                    value = EMBED_ORIGIN + value.split(EMBED_PREFIX, 1)[1]
+                request.add_header(name, value)
+        request.add_header("Accept-Encoding", "gzip")
+        try:
+            response = urllib.request.urlopen(request, timeout=30)
+        except urllib.error.HTTPError as exc:
+            response = exc
+        except Exception as exc:
+            return self.send_json({"error": f"Proxy error: {exc}"}, HTTPStatus.BAD_GATEWAY)
+
+        data = response.read()
+        if response.headers.get("Content-Encoding", "").lower() == "gzip":
+            data = gzip.GzipFile(fileobj=io.BytesIO(data)).read()
+        content_type = response.headers.get("Content-Type", "application/octet-stream")
+        if "text/html" in content_type:
+            text = data.decode(response.headers.get_content_charset() or "utf-8", errors="replace")
+            text = re.sub(r'''(?i)(href|src|action)=(["'])/''', rf'\1=\2{EMBED_PREFIX}/', text)
+            text = re.sub(r'''(?i)url\((["']?)/''', rf'url(\1{EMBED_PREFIX}/', text)
+            data = text.encode("utf-8")
+            content_type = "text/html; charset=utf-8"
+
+        self.send_response(response.status)
+        for name, value in response.headers.items():
+            low = name.lower()
+            if low in EMBED_STRIPPED_RESPONSE_HEADERS or low == "content-type":
+                continue
+            if low == "location":
+                absolute = urljoin(target_url, value)
+                if absolute.startswith(EMBED_ORIGIN):
+                    value = EMBED_PREFIX + absolute[len(EMBED_ORIGIN):]
+            elif low == "set-cookie":
+                value = re.sub(r";\s*Domain=[^;]+", "", value, flags=re.I)
+            self.send_header(name, value)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if path == EMBED_PREFIX or path.startswith(EMBED_PREFIX + "/"):
+            return self.proxy_embed()
         if path == "/":
             return self.send_bytes(
                 INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8"
@@ -6064,6 +6202,8 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == EMBED_PREFIX or path.startswith(EMBED_PREFIX + "/"):
+            return self.proxy_embed()
         try:
             payload = self.read_json()
             if path == "/api/select-folder":
@@ -6163,14 +6303,12 @@ DEFAULT_APP_PORT = 8765
 
 def main(open_browser=True, port=DEFAULT_APP_PORT):
     controller = PipelineController()
-    server = None
     try:
         server = AppServer(("127.0.0.1", int(port)), AppHandler)
-    except OSError:
-        if port != 0:
-            server = AppServer(("127.0.0.1", 0), AppHandler)
-        else:
-            raise
+    except OSError as exc:
+        raise RuntimeError(
+            f"Cổng {port} đang được sử dụng. Hãy đóng phiên VEO3 Auto Pipeline cũ rồi mở lại app."
+        ) from exc
     server.controller = controller
     controller.server = server
     port = server.server_address[1]

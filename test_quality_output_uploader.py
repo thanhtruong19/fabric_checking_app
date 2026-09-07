@@ -57,6 +57,31 @@ class QualityOutputTests(unittest.TestCase):
         self.assertIn("selectedQualityItem.node.classList.remove('selected')", html)
         self.assertIn("item.node.classList.add('selected')", html)
 
+    def test_quality_gallery_switches_child_folders_and_fills_column(self):
+        html = app.INDEX_HTML
+        self.assertIn("qualityFolderGroups = result.folders", html)
+        self.assertIn("showQualityFolder(0)", html)
+        self.assertIn("grid-template-columns: minmax(0, 1fr)", html)
+        self.assertIn("min-height: 700px", html)
+
+    def test_quality_folder_groups_default_to_sorted_first_child(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            second = root / "B-folder"
+            first = root / "A-folder"
+            second.mkdir(); first.mkdir()
+            (second / "b.png").write_bytes(b"b")
+            (first / "a.png").write_bytes(b"a")
+            groups = app.list_quality_folder_groups(root)
+        self.assertEqual([group["name"] for group in groups], ["A-folder", "B-folder"])
+        self.assertEqual(groups[0]["images"][0]["name"], "a.png")
+
+    def test_quality_upload_targets_same_origin_embed(self):
+        html = app.INDEX_HTML
+        self.assertIn('src="/embed/3d/suits?key=123456789"', html)
+        self.assertIn("frame.contentDocument", html)
+        self.assertIn("input.files = transfer.files", html)
+
     def test_validate_target_url(self):
         self.assertEqual(uploader.validate_target_url("https://example.com/test"), "https://example.com/test")
         for value in ("", "example.com", "file:///tmp/test.html", "javascript:alert(1)"):
@@ -115,6 +140,10 @@ class QualityOutputTests(unittest.TestCase):
         script = command[command.index("-Command") + 1]
         self.assertIn("$owner.TopMost=$true", script)
         self.assertIn("$dialog.ShowDialog($owner)", script)
+        self.assertIn("System.Windows.Forms.OpenFileDialog", script)
+        self.assertNotIn("FolderBrowserDialog", script)
+        self.assertIn("[IO.Directory]::Exists($selected)", script)
+        self.assertIn("[IO.Path]::GetDirectoryName($selected)", script)
 
 
 if __name__ == "__main__":
