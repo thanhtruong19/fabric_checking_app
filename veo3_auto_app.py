@@ -515,6 +515,28 @@ INDEX_HTML = r"""<!doctype html>
       .modal-previews { grid-template-columns: 1fr; }
       .drive-add-row { grid-template-columns: 1fr; }
     }
+    /* Output quality tab: keep styles isolated from existing screens. */
+    #tab-quality { display: grid; gap: 14px; }
+    #tab-quality .quality-field + .quality-field { margin-top: 14px; }
+    #tab-quality .quality-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    #tab-quality .quality-folders { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    #tab-quality .quality-folder { max-width: 100%; overflow-wrap: anywhere; }
+    #tab-quality .quality-gallery {
+      height: 40vh; min-height: 260px; overflow-y: auto; overscroll-behavior: contain;
+      scrollbar-gutter: stable; border: 1px solid var(--line); border-radius: 10px;
+      background: #081321; padding: 12px;
+    }
+    #tab-quality .quality-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    #tab-quality .quality-image { min-width: 0; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+    #tab-quality .quality-image img { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; background: #0b1728; border-radius: 6px; }
+    #tab-quality .quality-image figcaption { margin-top: 8px; overflow-wrap: anywhere; font-size: 12px; }
+    #tab-quality .quality-empty { min-height: 100%; display: grid; place-content: center; text-align: center; color: var(--muted); padding: 20px; }
+    #tab-quality .quality-empty strong { color: var(--text); font-size: 15px; margin-bottom: 6px; }
+    #tab-quality .quality-errors { max-height: 140px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); background: #081321; border: 1px solid var(--line); border-radius: 9px; padding: 12px; }
+    #tab-quality .quality-errors.has-errors { color: var(--red); border-color: #9f1239; }
+    @media(max-width: 480px) {
+      #tab-quality .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    }
   </style>
 </head>
 <body>
@@ -539,6 +561,9 @@ INDEX_HTML = r"""<!doctype html>
     <button id="nav-tab-audit" class="tab-nav-btn" type="button" onclick="switchTab('audit')">
       📁 <span>4. Quản lý Drive & So sánh vải</span>
       <span id="nav-audit-badge" class="tab-nav-badge">0</span>
+    </button>
+    <button id="nav-tab-quality" class="tab-nav-btn" type="button" onclick="switchTab('quality')">
+      🔍 <span>5. Test vải</span>
     </button>
   </nav>
 
@@ -943,6 +968,36 @@ INDEX_HTML = r"""<!doctype html>
 
     <!-- Container for detailed audit cards if run from custom url -->
     <div id="audit-results-container" style="display:flex; flex-direction:column; gap:14px; margin-top:14px;"></div>
+  </section>
+  <section id="tab-quality" class="tab-content hidden" aria-label="Kiểm thử chất lượng output vải">
+    <div class="card">
+      <h2>🔍 Kiểm thử chất lượng output vải</h2>
+      <div class="quality-field">
+        <label for="quality-website">Link trang web mục tiêu</label>
+        <input id="quality-website" type="text" inputmode="url" placeholder="https://example.com" aria-describedby="quality-website-hint" onblur="validateQualityWebsite()">
+        <div id="quality-website-hint" class="hint">Trang web sẽ nhận mẫu vải để kiểm thử. Thao tác gửi ảnh chưa được kết nối.</div>
+      </div>
+      <div class="quality-field">
+        <label>Folder vải</label>
+        <div class="quality-toolbar">
+          <button type="button" class="primary" onclick="$('quality-folder-input').click()">📁 Chọn folder vải</button>
+          <span class="hint">Có thể chọn thêm từng folder; ảnh trong các folder con cũng được hiển thị.</span>
+          <input id="quality-folder-input" type="file" webkitdirectory multiple hidden onchange="addQualityFolder(this)">
+        </div>
+        <div id="quality-folders" class="quality-folders" aria-label="Folder đã chọn"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header-flex"><h2>Ảnh output mẫu vải</h2><span id="quality-count" class="badge" role="status">0 ảnh</span></div>
+      <div class="quality-gallery" tabindex="0" aria-label="Danh sách ảnh mẫu vải có thể cuộn">
+        <div id="quality-empty" class="quality-empty"><strong>Chưa có ảnh mẫu vải</strong><span>Chọn folder vải để xem các ảnh output tại đây.</span></div>
+        <div id="quality-grid" class="quality-grid"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header-flex"><h2>Lỗi</h2><button type="button" class="ghost btn-sm" onclick="clearQualityErrors()">Xóa lỗi</button></div>
+      <div id="quality-errors" class="quality-errors" role="log" aria-live="polite">Chưa có lỗi.</div>
+    </div>
   </section>
 </main>
 
@@ -1433,6 +1488,98 @@ function texPromptMode() { return $('tex-prompt-mode-manual').checked ? 'manual'
 function fabPromptMode() { return $('fab-prompt-mode-manual').checked ? 'manual' : 'attachment'; }
 function flowPromptMode() { return $('flow-prompt-mode-manual').checked ? 'manual' : 'attachment'; }
 
+const qualityImages = new Map();
+const qualityErrors = [];
+function addQualityError(message) {
+  qualityErrors.push(message);
+  if (qualityErrors.length > 100) qualityErrors.shift();
+  $('quality-errors').textContent = qualityErrors.join('\n');
+  $('quality-errors').classList.add('has-errors');
+}
+function clearQualityErrors() {
+  qualityErrors.length = 0;
+  $('quality-errors').textContent = 'Chưa có lỗi.';
+  $('quality-errors').classList.remove('has-errors');
+}
+function validateQualityWebsite() {
+  const input = $('quality-website');
+  const value = input.value.trim();
+  try {
+    if (value && !['http:', 'https:'].includes(new URL(value).protocol)) throw new Error();
+    input.removeAttribute('aria-invalid');
+    return true;
+  } catch (_) {
+    input.setAttribute('aria-invalid', 'true');
+    addQualityError('Link trang web không hợp lệ. Vui lòng nhập địa chỉ bắt đầu bằng http:// hoặc https://.');
+    return false;
+  }
+}
+function updateQualitySummary() {
+  $('quality-count').textContent = `${qualityImages.size} ảnh`;
+  $('quality-empty').classList.toggle('hidden', qualityImages.size > 0);
+  const folders = new Set([...qualityImages.values()].map(item => item.folder));
+  $('quality-folders').replaceChildren();
+  for (const folder of folders) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghost btn-sm quality-folder';
+    button.textContent = `${folder} ×`;
+    button.setAttribute('aria-label', `Bỏ folder ${folder}`);
+    button.onclick = () => {
+      for (const [key, item] of qualityImages) {
+        if (item.folder !== folder) continue;
+        item.node.remove();
+        URL.revokeObjectURL(item.url);
+        qualityImages.delete(key);
+      }
+      updateQualitySummary();
+    };
+    $('quality-folders').append(button);
+  }
+}
+function addQualityFolder(input) {
+  const files = [...input.files];
+  input.value = '';
+  if (!files.length) return;
+  const images = files.filter(file => /\.(png|jpe?g|webp|gif|bmp|avif|tiff?)$/i.test(file.name));
+  if (!images.length) {
+    addQualityError('Folder đã chọn không chứa file ảnh được hỗ trợ.');
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const file of images) {
+    const path = file.webkitRelativePath || file.name;
+    const key = `${path}:${file.size}:${file.lastModified}`;
+    if (qualityImages.has(key)) continue;
+    try {
+      const url = URL.createObjectURL(file);
+      const node = document.createElement('figure');
+      node.className = 'quality-image';
+      const img = document.createElement('img');
+      img.alt = file.name;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.onerror = () => {
+        if (!qualityImages.has(key)) return;
+        addQualityError(`Không thể hiển thị ảnh: ${path}. File có thể bị hỏng hoặc định dạng không được trình duyệt hỗ trợ.`);
+      };
+      img.src = url;
+      const caption = document.createElement('figcaption');
+      caption.textContent = path;
+      node.append(img, caption);
+      qualityImages.set(key, {file, folder: path.includes('/') ? path.split('/')[0] : 'Ảnh local', url, node});
+      fragment.append(node);
+    } catch (error) {
+      addQualityError(`Không thể đọc ảnh ${path}: ${error.message}`);
+    }
+  }
+  $('quality-grid').append(fragment);
+  updateQualitySummary();
+}
+window.addEventListener('pagehide', event => {
+  if (!event.persisted) for (const item of qualityImages.values()) URL.revokeObjectURL(item.url);
+});
+
 let activeTab = 'dashboard';
 let activePromptSubTab = 'texture';
 
@@ -1444,11 +1591,13 @@ function switchTab(tabId) {
   $('tab-progress').classList.toggle('hidden', tabId !== 'progress');
   $('tab-logs').classList.toggle('hidden', tabId !== 'logs');
   $('tab-audit').classList.toggle('hidden', tabId !== 'audit');
+  $('tab-quality').classList.toggle('hidden', tabId !== 'quality');
 
   $('nav-tab-dashboard').classList.toggle('active', tabId === 'dashboard');
   $('nav-tab-progress').classList.toggle('active', tabId === 'progress');
   $('nav-tab-logs').classList.toggle('active', tabId === 'logs');
   $('nav-tab-audit').classList.toggle('active', tabId === 'audit');
+  $('nav-tab-quality').classList.toggle('active', tabId === 'quality');
 }
 
 function switchPromptSubTab(subTabId) {
@@ -2083,7 +2232,7 @@ async function fetchState() {
       // Restore active tab from previous session
       try {
         const savedTab = sessionStorage.getItem('veo3_active_tab');
-        if (savedTab && ['dashboard', 'progress', 'logs', 'audit'].includes(savedTab)) {
+        if (savedTab && ['dashboard', 'progress', 'logs', 'audit', 'quality'].includes(savedTab)) {
           switchTab(savedTab);
         }
       } catch(e) {}

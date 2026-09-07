@@ -23,7 +23,7 @@ echo Preparing safe first-run assets...
 if errorlevel 1 goto :error
 
 echo Building VEO3_AUTO_APP.exe...
-"%PYTHON_EXE%" -m PyInstaller ^
+"%PYTHON_EXE%" "%~dp0build_with_pyinstaller.py" ^
   --noconfirm ^
   --clean ^
   --onefile ^

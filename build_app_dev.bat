@@ -59,7 +59,7 @@ echo [2/2] Dang build ban PyInstaller Dev [Onedir + Console, tan dung cache]...
 "%PYTHON_EXE%" "%~dp0prepare_build_assets.py" "%~dp0config.json" "%~dp0build\runtime_assets\config.default.json"
 if errorlevel 1 goto :error
 
-"%PYTHON_EXE%" -m PyInstaller ^
+"%PYTHON_EXE%" "%~dp0build_with_pyinstaller.py" ^
   --noconfirm ^
   --onedir ^
   --console ^

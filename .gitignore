@@ -3,7 +3,7 @@
 # ==============================================================================
 
 # --- 1. SENSITIVE CREDENTIALS & NETWORK CAPTURES (BẢO MẬT TUYỆT ĐỐI) ---
-# Chứa Telegram Bot Token & Chat ID thật (dùng config.example.json để chia sẻ mẫu)
+# Chứa Telegram Bot Token & Chat ID thật (dùng config.json để chia sẻ mẫu)
 config.json
 # File HAR ghi lại traffic mạng chứa Session Cookies & Bearer Tokens của ChatGPT/Google
 request/
