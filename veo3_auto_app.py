@@ -528,6 +528,10 @@ INDEX_HTML = r"""<!doctype html>
     }
     #tab-quality .quality-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
     #tab-quality .quality-image { min-width: 0; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+    #tab-quality .quality-image { cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
+    #tab-quality .quality-image:hover, #tab-quality .quality-image:focus { border-color: var(--cyan); transform: translateY(-2px); outline: none; box-shadow: 0 8px 22px rgba(0,0,0,.25); }
+    #tab-quality .quality-image.uploading { opacity: .55; pointer-events: none; }
+    #tab-quality .quality-image.selected { border-color: var(--green); box-shadow: 0 0 0 2px rgba(34,197,94,.28), 0 8px 22px rgba(0,0,0,.25); }
     #tab-quality .quality-image img { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; background: #0b1728; border-radius: 6px; }
     #tab-quality .quality-image figcaption { margin-top: 8px; overflow-wrap: anywhere; font-size: 12px; }
     #tab-quality .quality-empty { min-height: 100%; display: grid; place-content: center; text-align: center; color: var(--muted); padding: 20px; }
@@ -975,14 +979,13 @@ INDEX_HTML = r"""<!doctype html>
       <div class="quality-field">
         <label for="quality-website">Link trang web mục tiêu</label>
         <input id="quality-website" type="text" inputmode="url" placeholder="https://example.com" aria-describedby="quality-website-hint" onblur="validateQualityWebsite()">
-        <div id="quality-website-hint" class="hint">Trang web sẽ nhận mẫu vải để kiểm thử. Thao tác gửi ảnh chưa được kết nối.</div>
+        <div id="quality-website-hint" class="hint">Bấm vào một ảnh bên dưới để đưa file đó vào ô Choose File của trang web này.</div>
       </div>
       <div class="quality-field">
         <label>Folder vải</label>
         <div class="quality-toolbar">
-          <button type="button" class="primary" onclick="$('quality-folder-input').click()">📁 Chọn folder vải</button>
+          <button id="quality-folder-button" type="button" class="primary" onclick="selectQualityFolder()">📁 Chọn folder vải</button>
           <span class="hint">Có thể chọn thêm từng folder; ảnh trong các folder con cũng được hiển thị.</span>
-          <input id="quality-folder-input" type="file" webkitdirectory multiple hidden onchange="addQualityFolder(this)">
         </div>
         <div id="quality-folders" class="quality-folders" aria-label="Folder đã chọn"></div>
       </div>
@@ -1490,6 +1493,8 @@ function flowPromptMode() { return $('flow-prompt-mode-manual').checked ? 'manua
 
 const qualityImages = new Map();
 const qualityErrors = [];
+let qualityUploading = false;
+let selectedQualityItem = null;
 function addQualityError(message) {
   qualityErrors.push(message);
   if (qualityErrors.length > 100) qualityErrors.shift();
@@ -1528,8 +1533,8 @@ function updateQualitySummary() {
     button.onclick = () => {
       for (const [key, item] of qualityImages) {
         if (item.folder !== folder) continue;
+        if (selectedQualityItem === item) selectedQualityItem = null;
         item.node.remove();
-        URL.revokeObjectURL(item.url);
         qualityImages.delete(key);
       }
       updateQualitySummary();
@@ -1537,24 +1542,33 @@ function updateQualitySummary() {
     $('quality-folders').append(button);
   }
 }
-function addQualityFolder(input) {
-  const files = [...input.files];
-  input.value = '';
-  if (!files.length) return;
-  const images = files.filter(file => /\.(png|jpe?g|webp|gif|bmp|avif|tiff?)$/i.test(file.name));
-  if (!images.length) {
-    addQualityError('Folder đã chọn không chứa file ảnh được hỗ trợ.');
-    return;
+async function selectQualityFolder() {
+  const button = $('quality-folder-button');
+  button.disabled = true;
+  try {
+    const result = await api('/api/select-quality-folder', {});
+    if (!result.path) return;
+    addQualityFolder(result);
+  } catch (error) {
+    addQualityError(error.message);
+  } finally {
+    button.disabled = false;
   }
+}
+function addQualityFolder(result) {
+  const images = result.images || [];
+  if (!images.length) return addQualityError('Folder đã chọn không chứa file ảnh được hỗ trợ.');
   const fragment = document.createDocumentFragment();
   for (const file of images) {
-    const path = file.webkitRelativePath || file.name;
-    const key = `${path}:${file.size}:${file.lastModified}`;
+    const path = file.relative_path || file.name;
+    const key = file.path;
     if (qualityImages.has(key)) continue;
     try {
-      const url = URL.createObjectURL(file);
       const node = document.createElement('figure');
       node.className = 'quality-image';
+      node.tabIndex = 0;
+      node.role = 'button';
+      node.title = 'Bấm để gửi ảnh này lên trang web mục tiêu';
       const img = document.createElement('img');
       img.alt = file.name;
       img.loading = 'lazy';
@@ -1563,11 +1577,16 @@ function addQualityFolder(input) {
         if (!qualityImages.has(key)) return;
         addQualityError(`Không thể hiển thị ảnh: ${path}. File có thể bị hỏng hoặc định dạng không được trình duyệt hỗ trợ.`);
       };
-      img.src = url;
+      img.src = '/api/quality-image?path=' + encodeURIComponent(file.path);
       const caption = document.createElement('figcaption');
       caption.textContent = path;
       node.append(img, caption);
-      qualityImages.set(key, {file, folder: path.includes('/') ? path.split('/')[0] : 'Ảnh local', url, node});
+      const item = {path: file.path, folder: result.path, node};
+      node.onclick = () => uploadQualityImage(item);
+      node.onkeydown = event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); uploadQualityImage(item); }
+      };
+      qualityImages.set(key, item);
       fragment.append(node);
     } catch (error) {
       addQualityError(`Không thể đọc ảnh ${path}: ${error.message}`);
@@ -1576,9 +1595,30 @@ function addQualityFolder(input) {
   $('quality-grid').append(fragment);
   updateQualitySummary();
 }
-window.addEventListener('pagehide', event => {
-  if (!event.persisted) for (const item of qualityImages.values()) URL.revokeObjectURL(item.url);
-});
+async function uploadQualityImage(item) {
+  if (qualityUploading) return;
+  if (selectedQualityItem === item) return;
+  clearQualityErrors();
+  if (!validateQualityWebsite()) return;
+  if (selectedQualityItem) selectedQualityItem.node.classList.remove('selected');
+  selectedQualityItem = item;
+  item.node.classList.add('selected');
+  qualityUploading = true;
+  item.node.classList.add('uploading');
+  $('quality-count').textContent = 'Đang gửi ảnh...';
+  try {
+    const result = await api('/api/upload-quality-image', {
+      target_url: $('quality-website').value.trim(), image_path: item.path
+    });
+    $('quality-count').textContent = `Đã gửi ${result.file_name}`;
+  } catch (error) {
+    addQualityError(error.message);
+    updateQualitySummary();
+  } finally {
+    qualityUploading = false;
+    item.node.classList.remove('uploading');
+  }
+}
 
 let activeTab = 'dashboard';
 let activePromptSubTab = 'texture';
@@ -3966,53 +4006,94 @@ def fabric_progress(project_dir, config, folder_filter=None):
 
 def choose_local_folder(initial_dir=None):
     """Open the native directory picker used by the local desktop app."""
-    import tkinter as tk
-    from tkinter import filedialog
+    initial = str(Path(initial_dir).resolve()) if initial_dir and safe_is_dir(initial_dir) else ""
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "$owner=New-Object System.Windows.Forms.Form;"
+        "$owner.ShowInTaskbar=$false;"
+        "$owner.TopMost=$true;"
+        "$owner.StartPosition='CenterScreen';"
+        "$owner.Size=New-Object System.Drawing.Size(1,1);"
+        "$owner.Opacity=0;"
+        "$owner.Show();$owner.Activate();"
+        "$dialog=New-Object System.Windows.Forms.FolderBrowserDialog;"
+        "$dialog.Description='Chọn thư mục ảnh vải local';"
+        "if($args[0]){$dialog.SelectedPath=$args[0]};"
+        "$dialog.ShowNewFolderButton=$false;"
+        "try{if($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK){"
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $dialog.SelectedPath}}"
+        "finally{$owner.Close();$owner.Dispose()}"
+    )
+    completed = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-STA", "-Command", script, initial],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=CREATE_NO_WINDOW,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "Không mở được cửa sổ chọn folder.")
+    selected = completed.stdout.strip()
+    return str(Path(selected).resolve()) if selected else ""
 
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    try:
-        initial = str(initial_dir) if initial_dir and safe_is_dir(initial_dir) else None
-        selected = filedialog.askdirectory(
-            parent=root,
-            title="Chọn thư mục ảnh vải local",
-            initialdir=initial,
-            mustexist=True,
-        )
-        return str(Path(selected).resolve()) if selected else ""
-    finally:
-        root.destroy()
+
+def list_quality_images(folder):
+    """Return supported images below a user-selected quality-test folder."""
+    root = Path(folder).resolve()
+    if not safe_is_dir(root):
+        raise ValueError("Folder vải không tồn tại hoặc không thể đọc.")
+    images = []
+    for path in sorted(root.rglob("*"), key=lambda item: str(item).casefold()):
+        if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+            images.append(
+                {
+                    "name": path.name,
+                    "path": str(path.resolve()),
+                    "relative_path": str(path.relative_to(root)).replace("\\", "/"),
+                }
+            )
+    return images
 
 
 def choose_prompt_file(initial_path=None):
     """Open the native file picker for selecting a markdown/text prompt document."""
-    import tkinter as tk
-    from tkinter import filedialog
-
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    try:
-        initial_dir = None
-        if initial_path:
-            p = Path(initial_path)
-            if safe_is_file(p):
-                initial_dir = str(p.parent)
-            elif safe_is_dir(p):
-                initial_dir = str(p)
-        selected = filedialog.askopenfilename(
-            parent=root,
-            title="Chọn file Master Prompt (Markdown / Text)",
-            initialdir=initial_dir,
-            filetypes=[
-                ("Markdown & Text files", "*.md;*.txt;*.markdown"),
-                ("All files", "*.*"),
-            ],
-        )
-        return str(Path(selected).resolve()) if selected else ""
-    finally:
-        root.destroy()
+    initial_dir = ""
+    if initial_path:
+        path = Path(initial_path)
+        if safe_is_file(path):
+            initial_dir = str(path.resolve().parent)
+        elif safe_is_dir(path):
+            initial_dir = str(path.resolve())
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "$owner=New-Object System.Windows.Forms.Form;"
+        "$owner.ShowInTaskbar=$false;"
+        "$owner.TopMost=$true;"
+        "$owner.StartPosition='CenterScreen';"
+        "$owner.Size=New-Object System.Drawing.Size(1,1);"
+        "$owner.Opacity=0;"
+        "$owner.Show();$owner.Activate();"
+        "$dialog=New-Object System.Windows.Forms.OpenFileDialog;"
+        "$dialog.Title='Chọn file Master Prompt';"
+        "$dialog.Filter='Markdown and Text (*.md;*.txt;*.markdown)|*.md;*.txt;*.markdown|All files (*.*)|*.*';"
+        "if($args[0]){$dialog.InitialDirectory=$args[0]};"
+        "try{if($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK){"
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8;Write-Output $dialog.FileName}}"
+        "finally{$owner.Close();$owner.Dispose()}"
+    )
+    completed = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-STA", "-Command", script, initial_dir],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=CREATE_NO_WINDOW,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or "Không mở được cửa sổ chọn file prompt.")
+    selected = completed.stdout.strip()
+    return str(Path(selected).resolve()) if selected else ""
 
 
 def get_default_prompt_text(project_dir, flow_key):
@@ -4326,6 +4407,7 @@ class PipelineController:
         self.last_client_at = time.monotonic()
         self.active_running_folder = None
         self.current_folder_filter = "all"
+        self.quality_folders = set()
 
         # Session Metrics
         self.session_running = False
@@ -4363,6 +4445,36 @@ class PipelineController:
 
     def is_running(self):
         return bool(self.worker and self.worker.is_alive())
+
+    def select_quality_folder(self):
+        selected = choose_local_folder()
+        if not selected:
+            return {"path": "", "images": []}
+        root = Path(selected).resolve()
+        images = list_quality_images(root)
+        with self.lock:
+            self.quality_folders.add(root)
+        return {"path": str(root), "images": images}
+
+    def resolve_quality_image(self, image_path):
+        candidate = Path(str(image_path or "")).resolve()
+        with self.lock:
+            roots = tuple(self.quality_folders)
+        if not any(candidate == root or root in candidate.parents for root in roots):
+            raise ValueError("Ảnh không thuộc folder vải đã chọn trong phiên hiện tại.")
+        if not candidate.is_file() or candidate.suffix.lower() not in SUPPORTED_IMAGE_EXTENSIONS:
+            raise ValueError("File ảnh không tồn tại hoặc không được hỗ trợ.")
+        return candidate
+
+    def upload_quality_image(self, payload):
+        target_url = str(payload.get("target_url", "")).strip()
+        image = self.resolve_quality_image(payload.get("image_path"))
+        from quality_output_uploader import upload_image_to_target
+
+        self.append_log(f"[Quality] Đang gửi {image.name} tới {target_url}\n")
+        result = upload_image_to_target(self.project_dir, target_url, image)
+        self.append_log(f"[Quality] Đã đưa {image.name} vào Choose File: {result['target_url']}\n")
+        return result
 
     def state(self, folder_filter=None):
         self.last_client_at = time.monotonic()
@@ -5930,6 +6042,24 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_bytes(body, mime_type, cache_seconds=5)
             except Exception:
                 return self.send_placeholder_svg(sku, kind)
+        if path == "/api/quality-image":
+            query = parse_qs(parsed.query)
+            try:
+                img_path = self.controller.resolve_quality_image(
+                    query.get("path", [""])[0]
+                )
+                mime_types = {
+                    ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".png": "image/png", ".webp": "image/webp",
+                    ".bmp": "image/bmp", ".gif": "image/gif",
+                    ".tif": "image/tiff", ".tiff": "image/tiff",
+                }
+                with open(img_path, "rb") as stream:
+                    return self.send_bytes(
+                        stream.read(), mime_types.get(img_path.suffix.lower(), "application/octet-stream")
+                    )
+            except Exception as exc:
+                return self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         self.send_json({"error": "Không tìm thấy."}, HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
@@ -5939,6 +6069,10 @@ class AppHandler(BaseHTTPRequestHandler):
             if path == "/api/select-folder":
                 selected = choose_local_folder(payload.get("initial_dir"))
                 return self.send_json({"path": selected})
+            if path == "/api/select-quality-folder":
+                return self.send_json(self.controller.select_quality_folder())
+            if path == "/api/upload-quality-image":
+                return self.send_json(self.controller.upload_quality_image(payload))
             if path == "/api/select-prompt-file":
                 selected = choose_prompt_file(payload.get("initial_path"))
                 return self.send_json({"path": selected})

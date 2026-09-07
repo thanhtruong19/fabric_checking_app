@@ -4,15 +4,27 @@ cd /d "%~dp0"
 
 echo [DEV MODE] Dang khoi chay VEO3 Auto Pipeline...
 
+if exist "%~dp0dist\dev\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe" (
+    echo Khoi chay ban PyInstaller DEV moi nhat: %~dp0dist\dev\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe
+    start "" "%~dp0dist\dev\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe"
+    exit /b 0
+)
+
+if exist "%~dp0dist\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe" (
+    echo Khoi chay ban DEV moi nhat: %~dp0dist\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe
+    start "" "%~dp0dist\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe"
+    exit /b 0
+)
+
 if exist "%~dp0dist\VEO3_AUTO_APP_DEV.exe" (
     echo Khoi chay qua dev launcher: %~dp0dist\VEO3_AUTO_APP_DEV.exe
     start "" "%~dp0dist\VEO3_AUTO_APP_DEV.exe"
     exit /b 0
 )
 
-if exist "%~dp0dist\dev\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe" (
-    echo Khoi chay ban PyInstaller dev: %~dp0dist\dev\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe
-    start "" "%~dp0dist\dev\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe"
+if exist "%~dp0dist\VEO3_AUTO_APP_AUTO_CHROME\VEO3_AUTO_APP_AUTO_CHROME.exe" (
+    echo Khoi chay ban DEV auto Chrome cu: %~dp0dist\VEO3_AUTO_APP_AUTO_CHROME\VEO3_AUTO_APP_AUTO_CHROME.exe
+    start "" "%~dp0dist\VEO3_AUTO_APP_AUTO_CHROME\VEO3_AUTO_APP_AUTO_CHROME.exe"
     exit /b 0
 )
 
