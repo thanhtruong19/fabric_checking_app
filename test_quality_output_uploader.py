@@ -76,11 +76,14 @@ class QualityOutputTests(unittest.TestCase):
         self.assertEqual([group["name"] for group in groups], ["A-folder", "B-folder"])
         self.assertEqual(groups[0]["images"][0]["name"], "a.png")
 
-    def test_quality_upload_targets_same_origin_embed(self):
+    def test_quality_upload_uses_dunnio_post_message_protocol(self):
         html = app.INDEX_HTML
-        self.assertIn('src="/embed/3d/suits?key=123456789"', html)
-        self.assertIn("frame.contentDocument", html)
-        self.assertIn("input.files = transfer.files", html)
+        self.assertIn('src="https://dunniotailor.com/3d/suits?key=123456789"', html)
+        self.assertIn("type: 'DUNNIO_ATTACH_IMAGE'", html)
+        self.assertIn("message?.type !== 'DUNNIO_ATTACH_IMAGE_RESULT'", html)
+        self.assertIn("event.origin !== targetOrigin", html)
+        self.assertIn("event.source !== frame.contentWindow", html)
+        self.assertIn("}, targetOrigin, [bytes])", html)
 
     def test_validate_target_url(self):
         self.assertEqual(uploader.validate_target_url("https://example.com/test"), "https://example.com/test")

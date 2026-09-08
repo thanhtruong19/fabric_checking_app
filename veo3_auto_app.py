@@ -1,7 +1,5 @@
 import datetime
-import gzip
 import html
-import io
 import json
 import os
 import re
@@ -18,7 +16,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 APP_TITLE = "VEO3 Auto Pipeline"
@@ -38,15 +36,6 @@ SUPPORTED_IMAGE_EXTENSIONS = {
     ".tif",
     ".tiff",
 }
-
-EMBED_ORIGIN = "https://dunniotailor.com"
-EMBED_PREFIX = "/embed"
-EMBED_STRIPPED_RESPONSE_HEADERS = {
-    "connection", "content-encoding", "content-length",
-    "content-security-policy", "content-security-policy-report-only",
-    "strict-transport-security", "transfer-encoding", "x-frame-options",
-}
-
 
 @dataclass(frozen=True)
 class FlowStep:
@@ -1649,21 +1638,33 @@ async function uploadQualityImage(item) {
     const response = await fetch('/api/quality-image?path=' + encodeURIComponent(item.path), {cache: 'no-store'});
     if (!response.ok) throw new Error('Không đọc được file ảnh đã chọn.');
     const blob = await response.blob();
-    const file = new File([blob], item.name, {type: blob.type || 'application/octet-stream'});
-    const frameDocument = frame.contentDocument;
-    if (!frameDocument) throw new Error('Trang kiểm thử chưa tải xong.');
-    const inputs = [...frameDocument.querySelectorAll('input[type="file"]:not([disabled])')];
-    const input = inputs.find(node => {
-      const accepts = (node.accept || '').toLowerCase();
-      return !accepts || accepts.includes('image') || accepts.includes('.png') || accepts.includes('.jpg');
+    const bytes = await blob.arrayBuffer();
+    const requestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    const targetOrigin = 'https://dunniotailor.com';
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', receiveResult);
+        reject(new Error('Dunnio Tailor không phản hồi yêu cầu nhận ảnh.'));
+      }, 8000);
+      function receiveResult(event) {
+        if (event.origin !== targetOrigin || event.source !== frame.contentWindow) return;
+        const message = event.data;
+        if (message?.type !== 'DUNNIO_ATTACH_IMAGE_RESULT' || message.requestId !== requestId) return;
+        clearTimeout(timeout);
+        window.removeEventListener('message', receiveResult);
+        message.success ? resolve(message) : reject(new Error(message.error || 'Dunnio Tailor không nhận được ảnh.'));
+      }
+      window.addEventListener('message', receiveResult);
+      frame.contentWindow.postMessage({
+        type: 'DUNNIO_ATTACH_IMAGE',
+        requestId,
+        payload: {
+          name: item.name,
+          mime: blob.type || 'application/octet-stream',
+          bytes
+        }
+      }, targetOrigin, [bytes]);
     });
-    if (!input) throw new Error('Trang web trong iframe không có ô Choose File nhận ảnh.');
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    input.files = transfer.files;
-    input.dispatchEvent(new Event('input', {bubbles: true}));
-    input.dispatchEvent(new Event('change', {bubbles: true}));
-    if (!input.files || input.files[0]?.name !== item.name) throw new Error('Trang web chưa nhận đúng file ảnh đã chọn.');
     $('quality-count').textContent = `Đã gửi ${item.name}`;
   } catch (error) {
     addQualityError(error.message);
@@ -6070,65 +6071,9 @@ class AppHandler(BaseHTTPRequestHandler):
             raise ValueError("Request phải là JSON object.")
         return value
 
-    def proxy_embed(self):
-        """Proxy Dunnio under /embed so the parent page can access the iframe DOM."""
-        suffix = self.path[len(EMBED_PREFIX):] or "/"
-        target_url = urljoin(EMBED_ORIGIN + "/", suffix.lstrip("/"))
-        body = None
-        content_length = self.headers.get("Content-Length")
-        if content_length:
-            body = self.rfile.read(int(content_length))
-        request = urllib.request.Request(target_url, data=body, method=self.command)
-        for name in ("User-Agent", "Accept", "Accept-Language", "Cookie", "Content-Type", "Origin", "Referer"):
-            value = self.headers.get(name)
-            if value:
-                if name == "Origin":
-                    value = EMBED_ORIGIN
-                elif name == "Referer" and EMBED_PREFIX in value:
-                    value = EMBED_ORIGIN + value.split(EMBED_PREFIX, 1)[1]
-                request.add_header(name, value)
-        request.add_header("Accept-Encoding", "gzip")
-        try:
-            response = urllib.request.urlopen(request, timeout=30)
-        except urllib.error.HTTPError as exc:
-            response = exc
-        except Exception as exc:
-            return self.send_json({"error": f"Proxy error: {exc}"}, HTTPStatus.BAD_GATEWAY)
-
-        data = response.read()
-        if response.headers.get("Content-Encoding", "").lower() == "gzip":
-            data = gzip.GzipFile(fileobj=io.BytesIO(data)).read()
-        content_type = response.headers.get("Content-Type", "application/octet-stream")
-        if "text/html" in content_type:
-            text = data.decode(response.headers.get_content_charset() or "utf-8", errors="replace")
-            text = re.sub(r'''(?i)(href|src|action)=(["'])/''', rf'\1=\2{EMBED_PREFIX}/', text)
-            text = re.sub(r'''(?i)url\((["']?)/''', rf'url(\1{EMBED_PREFIX}/', text)
-            data = text.encode("utf-8")
-            content_type = "text/html; charset=utf-8"
-
-        self.send_response(response.status)
-        for name, value in response.headers.items():
-            low = name.lower()
-            if low in EMBED_STRIPPED_RESPONSE_HEADERS or low == "content-type":
-                continue
-            if low == "location":
-                absolute = urljoin(target_url, value)
-                if absolute.startswith(EMBED_ORIGIN):
-                    value = EMBED_PREFIX + absolute[len(EMBED_ORIGIN):]
-            elif low == "set-cookie":
-                value = re.sub(r";\s*Domain=[^;]+", "", value, flags=re.I)
-            self.send_header(name, value)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
-
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path == EMBED_PREFIX or path.startswith(EMBED_PREFIX + "/"):
-            return self.proxy_embed()
         if path == "/":
             return self.send_bytes(
                 INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8"
@@ -6202,8 +6147,6 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path == EMBED_PREFIX or path.startswith(EMBED_PREFIX + "/"):
-            return self.proxy_embed()
         try:
             payload = self.read_json()
             if path == "/api/select-folder":
