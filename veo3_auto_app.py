@@ -516,17 +516,18 @@ INDEX_HTML = r"""<!doctype html>
     }
     /* Output quality tab: keep styles isolated from existing screens. */
     #tab-quality { display: grid; gap: 14px; }
-    #tab-quality .quality-workspace { display: grid; grid-template-columns: minmax(190px, 20%) minmax(0, 80%); gap: 14px; min-height: 68vh; }
-    #tab-quality .quality-browser-card { min-width: 0; display: flex; flex-direction: column; }
-    #tab-quality .quality-browser-frame { width: 100%; flex: 1; min-height: 640px; border: 1px solid var(--line); border-radius: 10px; background: white; }
+    #tab-quality .quality-workspace { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(0, 4fr); gap: 14px; }
+    #tab-quality .quality-workspace > .card { height: clamp(420px, 72vh, 900px); min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+    #tab-quality .quality-workspace .card-header-flex { flex-shrink: 0; }
+    #tab-quality #quality-active-folder { flex-shrink: 0; overflow-wrap: anywhere; }
+    #tab-quality .quality-browser-frame { width: 100%; flex: 1 1 0; min-height: 0; border: 1px solid var(--line); border-radius: 10px; background: white; }
     #tab-quality .quality-field + .quality-field { margin-top: 14px; }
     #tab-quality .quality-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-    #tab-quality .quality-folders { display: flex; flex-direction: column; align-items: stretch; gap: 7px; margin-top: 10px; }
-    #tab-quality .quality-folder { max-width: 100%; overflow-wrap: anywhere; }
+    #tab-quality .quality-folders { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; margin-top: 10px; max-height: 160px; overflow-y: auto; }
+    #tab-quality .quality-folder { flex: 0 1 auto; width: auto; max-width: 100%; padding: 5px 9px; font-size: 12px; line-height: 1.4; text-align: left; overflow-wrap: anywhere; }
     #tab-quality .quality-folder.active { color: white; background: var(--blue); border-color: #3b82f6; }
-    #tab-quality .quality-workspace > .card:first-child { min-width: 0; min-height: 700px; display: flex; flex-direction: column; }
     #tab-quality .quality-gallery {
-      height: auto; min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain;
+      min-height: 0; flex: 1 1 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
       scrollbar-gutter: stable; border: 1px solid var(--line); border-radius: 10px;
       background: #081321; padding: 12px;
     }
@@ -543,11 +544,10 @@ INDEX_HTML = r"""<!doctype html>
     #tab-quality .quality-errors { max-height: 140px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); background: #081321; border: 1px solid var(--line); border-radius: 9px; padding: 12px; }
     #tab-quality .quality-errors.has-errors { color: var(--red); border-color: #9f1239; }
     @media(max-width: 480px) {
-      #tab-quality .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      #tab-quality .quality-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
     }
     @media(max-width: 900px) {
       #tab-quality .quality-workspace { grid-template-columns: 1fr; }
-      #tab-quality .quality-browser-frame { min-height: 70vh; }
     }
   </style>
 </head>
@@ -993,7 +993,7 @@ INDEX_HTML = r"""<!doctype html>
         <label>Folder vải</label>
         <div class="quality-toolbar">
           <button id="quality-folder-button" type="button" class="primary" onclick="selectQualityFolder()">📁 Chọn folder vải</button>
-          <span class="hint">Các folder con có ảnh sẽ hiện bên dưới; folder đầu tiên được mở mặc định.</span>
+          <span class="hint">Chọn folder cha để hiện các folder con bên dưới. Bấm một folder để xem toàn bộ ảnh bên trong, kể cả các cấp con, theo thứ tự tên và số. Folder chỉ chứa ảnh sẽ hiển thị ảnh ngay.</span>
         </div>
         <div id="quality-folders" class="quality-folders" aria-label="Folder đã chọn"></div>
       </div>
@@ -1001,6 +1001,7 @@ INDEX_HTML = r"""<!doctype html>
     <div class="quality-workspace">
       <div class="card">
         <div class="card-header-flex"><h2>Ảnh output mẫu vải</h2><span id="quality-count" class="badge" role="status">0 ảnh</span></div>
+        <div id="quality-active-folder" class="hint" role="status"></div>
         <div class="quality-gallery" tabindex="0" aria-label="Danh sách ảnh mẫu vải có thể cuộn">
           <div id="quality-empty" class="quality-empty"><strong>Chưa có ảnh mẫu vải</strong><span>Chọn folder vải để xem các ảnh output tại đây.</span></div>
           <div id="quality-grid" class="quality-grid"></div>
@@ -1538,6 +1539,9 @@ function validateQualityWebsite() {
 function updateQualitySummary() {
   $('quality-count').textContent = `${qualityImages.size} ảnh`;
   $('quality-empty').classList.toggle('hidden', qualityImages.size > 0);
+  const folder = qualityFolderGroups[activeQualityFolderIndex];
+  $('quality-empty').querySelector('strong').textContent = folder ? 'Folder này chưa có ảnh' : 'Chưa có ảnh mẫu vải';
+  $('quality-empty').querySelector('span').textContent = folder ? `Không có file ảnh được hỗ trợ trong ${folder.name}. Chọn folder khác bên trên để xem ảnh.` : 'Chọn folder vải để xem các ảnh output tại đây.';
 }
 async function selectQualityFolder() {
   const button = $('quality-folder-button');
@@ -1546,6 +1550,7 @@ async function selectQualityFolder() {
     const result = await api('/api/select-quality-folder', {});
     if (!result.path) return;
     qualityFolderGroups = result.folders || [];
+    activeQualityFolderIndex = -1;
     renderQualityFolderButtons();
     if (qualityFolderGroups.length) showQualityFolder(0);
     else {
@@ -1559,6 +1564,7 @@ async function selectQualityFolder() {
   }
 }
 function clearQualityImages() {
+  $('quality-active-folder').textContent = '';
   qualityImages.clear();
   selectedQualityItem = null;
   $('quality-grid').replaceChildren();
@@ -1571,7 +1577,8 @@ function renderQualityFolderButtons() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'ghost btn-sm quality-folder';
-    button.textContent = `${folder.name} (${folder.images.length})`;
+    button.textContent = `📁 ${folder.name} (${folder.images.length})`;
+    button.setAttribute('aria-pressed', 'false');
     button.title = folder.path;
     button.onclick = () => showQualityFolder(index);
     folder.button = button;
@@ -1581,9 +1588,14 @@ function renderQualityFolderButtons() {
 function showQualityFolder(index) {
   if (index < 0 || index >= qualityFolderGroups.length) return;
   activeQualityFolderIndex = index;
-  qualityFolderGroups.forEach((folder, position) => folder.button?.classList.toggle('active', position === index));
+  qualityFolderGroups.forEach((folder, position) => {
+    folder.button?.classList.toggle('active', position === index);
+    folder.button?.setAttribute('aria-pressed', String(position === index));
+  });
   clearQualityImages();
   const folder = qualityFolderGroups[index];
+  $('quality-active-folder').textContent = `Nhóm vải: ${folder.name}`;
+  $('quality-grid').closest('.quality-gallery').scrollTop = 0;
   const images = folder.images || [];
   const fragment = document.createDocumentFragment();
   for (const file of images) {
@@ -4102,13 +4114,22 @@ def choose_local_folder(initial_dir=None):
     return str(Path(selected).resolve()) if selected else ""
 
 
+def quality_path_sort_key(path):
+    """Keep each fabric code together and sort numeric suffixes naturally."""
+    return tuple(
+        tuple((1, int(part)) if part.isdigit() else (0, part.casefold())
+              for part in re.split(r"(\d+)", component))
+        for component in Path(path).parts
+    )
+
+
 def list_quality_images(folder):
     """Return supported images below a user-selected quality-test folder."""
     root = Path(folder).resolve()
     if not safe_is_dir(root):
         raise ValueError("Folder vải không tồn tại hoặc không thể đọc.")
     images = []
-    for path in sorted(root.rglob("*"), key=lambda item: str(item).casefold()):
+    for path in sorted(root.rglob("*"), key=lambda item: quality_path_sort_key(item.relative_to(root))):
         if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
             images.append(
                 {
@@ -4123,16 +4144,25 @@ def list_quality_images(folder):
 def list_quality_folder_groups(folder):
     """List immediate child folders and the images belonging to each child."""
     root = Path(folder).resolve()
+    if not safe_is_dir(root):
+        raise ValueError("Folder vải không tồn tại hoặc không thể đọc.")
     children = sorted(
         (path for path in root.iterdir() if path.is_dir()),
-        key=lambda item: item.name.casefold(),
+        key=lambda item: quality_path_sort_key(item.name),
     )
     groups = []
     for child in children:
         images = list_quality_images(child)
+        groups.append({"name": child.name, "path": str(child.resolve()), "images": images})
+    if children:
+        images = [
+            {"name": path.name, "path": str(path.resolve()), "relative_path": path.name}
+            for path in sorted(root.iterdir(), key=lambda item: quality_path_sort_key(item.name))
+            if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+        ]
         if images:
-            groups.append({"name": child.name, "path": str(child.resolve()), "images": images})
-    if not groups:
+            groups.append({"name": root.name + " (ảnh trực tiếp)", "path": str(root), "images": images})
+    else:
         images = list_quality_images(root)
         if images:
             groups.append({"name": root.name, "path": str(root), "images": images})

@@ -11,6 +11,55 @@ from prepare_build_assets import create_default_config
 
 
 class VEO3AutoAppTests(unittest.TestCase):
+    def test_quality_chatgpt_groups_collect_code_images_in_numeric_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "chatgpt"
+            for group in ("M10HL", "M2HL"):
+                for code in ("NH10", "NH2", "NH1"):
+                    folder = root / group / code
+                    folder.mkdir(parents=True)
+                    for name in ("image_10.png", "image_2.png", "seamless_texture.png", "metadata.json"):
+                        (folder / name).touch()
+                (root / group / "archive.zip").touch()
+
+            groups = app.list_quality_folder_groups(root)
+
+            self.assertEqual([group["name"] for group in groups], ["M2HL", "M10HL"])
+            for group in groups:
+                self.assertEqual(
+                    [image["relative_path"] for image in group["images"]],
+                    [f"{code}/{name}" for code in ("NH1", "NH2", "NH10")
+                     for name in ("image_2.png", "image_10.png", "seamless_texture.png")],
+                )
+
+    def test_quality_parent_keeps_child_images_separate_and_empty_folders_visible(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "B").mkdir()
+            (root / "A" / "nested").mkdir(parents=True)
+            (root / "A" / "nested" / "fabric.PNG").touch()
+            (root / "parent.jpg").touch()
+            (root / "notes.txt").touch()
+
+            groups = app.list_quality_folder_groups(root)
+
+            self.assertEqual([group["name"] for group in groups[:2]], ["A", "B"])
+            self.assertEqual([image["relative_path"] for image in groups[0]["images"]], ["nested/fabric.PNG"])
+            self.assertEqual(groups[1]["images"], [])
+            self.assertEqual([image["name"] for image in groups[2]["images"]], ["parent.jpg"])
+
+    def test_quality_image_only_folder_opens_its_images(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "fabric.jpg").touch()
+            (root / "notes.txt").touch()
+
+            groups = app.list_quality_folder_groups(root)
+
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0]["path"], str(root.resolve()))
+            self.assertEqual([image["name"] for image in groups[0]["images"]], ["fabric.jpg"])
+
     def test_standalone_step_relaunches_the_executable_as_worker(self):
         step = app.FlowStep("crop", "Crop", "crop_textures.py")
         with patch.object(app, "is_frozen", return_value=True):
