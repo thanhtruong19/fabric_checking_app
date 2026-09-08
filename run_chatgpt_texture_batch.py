@@ -468,6 +468,19 @@ def normalize_image_to_master(source_path, staged_png):
     }
 
 
+def get_automation_chatgpt_page(context):
+    """Reuse a ChatGPT tab in the dedicated automation browser across workers."""
+    from urllib.parse import urlparse
+    available = [page for page in context.pages if not page.is_closed()]
+    for page in available:
+        if urlparse(page.url).hostname in {"chatgpt.com", "chat.openai.com"}:
+            return page
+    for page in available:
+        if page.url in {"about:blank", "chrome://newtab/"}:
+            return page
+    return context.new_page()
+
+
 def download_and_validate(page, generated_image, sku, target_path):
     generated_image.scroll_into_view_if_needed()
     generated_image.click()
@@ -483,7 +496,9 @@ def download_and_validate(page, generated_image, sku, target_path):
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
     downloaded_path = DOWNLOAD_DIR / f"{sku}_{stamp}_{os.getpid()}.download"
-    staged_png = DOWNLOAD_DIR / f".{sku}_{stamp}_{os.getpid()}.png"
+    # Atomic replacement requires the staged PNG and output to share a drive.
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    staged_png = target_path.parent / f".{sku}_{stamp}_{os.getpid()}.png"
     try:
         with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as download_info:
             save_button.click()
@@ -521,7 +536,8 @@ def recover_previous_download(sku, target_path):
         INVALID_DIR.glob(f"{sku}_*"), key=lambda path: path.stat().st_mtime, reverse=True
     )
     for candidate in candidates:
-        staged_png = DOWNLOAD_DIR / f".{sku}_recovery_{os.getpid()}.png"
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        staged_png = target_path.parent / f".{sku}_recovery_{os.getpid()}.png"
         try:
             output_info = normalize_image_to_master(candidate, staged_png)
             os.replace(staged_png, target_path)
@@ -1013,7 +1029,7 @@ def main():
 
         context.set_default_timeout(30000)
         context.set_default_navigation_timeout(60000)
-        page = context.new_page()
+        page = get_automation_chatgpt_page(context)
         page.on("response", log_response)
         page.bring_to_front()
         try:
@@ -1054,7 +1070,7 @@ def main():
                     )
                     break
         finally:
-            page.close()
+            page.remove_listener("response", log_response)
 
 
 if __name__ == "__main__":

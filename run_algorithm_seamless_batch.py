@@ -376,6 +376,10 @@ def refine_chatgpt_texture_seamless(
     sku,
     folder=None,
     project_dir=None,
+    final_path=None,
+    textures_dir=None,
+    texture_path=None,
+    refresh_raw_backup=False,
     size=None,
     overlap=None,
     feather=3,
@@ -394,7 +398,7 @@ def refine_chatgpt_texture_seamless(
     """
     p_dir = Path(project_dir) if project_dir else PROJECT_DIR
     out_root = p_dir / "output" / "chatgpt"
-    textures_dir = p_dir / "textures"
+    textures_dir = Path(textures_dir) if textures_dir else p_dir / "textures"
 
     # Locate target file
     candidate_paths = []
@@ -403,16 +407,21 @@ def refine_chatgpt_texture_seamless(
     candidate_paths.append((out_root / sku / "seamless_texture.png", out_root / sku, None))
 
     # Also search globally if not found
-    target_path = None
-    sku_dir = None
+    target_path = Path(final_path) if final_path else None
+    sku_dir = target_path.parent if target_path else None
     resolved_folder = folder
 
-    for c_path, c_dir, c_fol in candidate_paths:
-        if c_path.is_file():
-            target_path = c_path
-            sku_dir = c_dir
-            resolved_folder = c_fol
-            break
+    if target_path and not target_path.is_file():
+        target_path = None
+        sku_dir = None
+
+    if not target_path:
+        for c_path, c_dir, c_fol in candidate_paths:
+            if c_path.is_file():
+                target_path = c_path
+                sku_dir = c_dir
+                resolved_folder = c_fol
+                break
 
     if not target_path:
         # Search anywhere in output/chatgpt
@@ -439,8 +448,13 @@ def refine_chatgpt_texture_seamless(
     img1_candidate = sku_dir / "image_1.png"
     final_master = sku_dir / "seamless_texture.png"
 
+    # A forced ChatGPT rerun produced a new pristine texture. Replace the old
+    # backup before selecting the source so refinement uses this new result.
+    if refresh_raw_backup and target_path.is_file():
+        shutil.copyfile(target_path, raw_backup)
+
     # Priority for pristine source:
-    # 1. raw_backup if exists (never overwritten after first creation)
+    # 1. raw_backup if exists (refreshed above for a forced ChatGPT rerun)
     # 2. image_1.png if exists (original high-res AI output from ChatGPT)
     # 3. target_path
     if raw_backup.is_file():
@@ -507,9 +521,13 @@ def refine_chatgpt_texture_seamless(
     pil_img.save(final_master, "PNG", optimize=True)
 
     # Also update texture in textures/
-    tex_folder = textures_dir / resolved_folder if resolved_folder else textures_dir
-    tex_folder.mkdir(parents=True, exist_ok=True)
-    pil_img.save(tex_folder / f"texture_{sku}.png", "PNG", optimize=True)
+    if texture_path:
+        texture_output = Path(texture_path)
+    else:
+        tex_folder = textures_dir / resolved_folder if resolved_folder else textures_dir
+        texture_output = tex_folder / f"texture_{sku}.png"
+    texture_output.parent.mkdir(parents=True, exist_ok=True)
+    pil_img.save(texture_output, "PNG", optimize=True)
 
     # Write QC images
     write_qc(rgb, str(sku_dir))

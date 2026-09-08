@@ -26,6 +26,9 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 PROJECT_DIR = get_project_dir(__file__)
 CONFIG_PATH = PROJECT_DIR / "config.json"
 DEFAULT_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"]
+DRIVE_NOT_PUBLIC_MESSAGE = (
+    "Không truy cập được thư mục Drive — link Drive hiện không public để có thể truy cập."
+)
 WINDOWS_INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 WINDOWS_RESERVED = {
     "con",
@@ -104,6 +107,17 @@ def run_gdown(arguments, timeout_seconds):
         details = (result.stderr or result.stdout).strip()
         if "No module named gdown" in details:
             details = "gdown is not available in this application build."
+        elif any(
+            marker in details.casefold()
+            for marker in (
+                "failed to retrieve folder contents",
+                "anyone with the link",
+                "permission",
+                "cp932",
+                "multibyte sequence",
+            )
+        ):
+            details = DRIVE_NOT_PUBLIC_MESSAGE
         raise RuntimeError(details or f"gdown exited with code {result.returncode}.")
     return result.stdout
 

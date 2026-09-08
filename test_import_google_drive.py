@@ -1,7 +1,31 @@
 import unittest
 from pathlib import Path, PurePosixPath
+from unittest.mock import patch
 
-from import_google_drive import select_images
+from import_google_drive import DRIVE_NOT_PUBLIC_MESSAGE, run_gdown, select_images
+
+
+class RunGdownErrorTests(unittest.TestCase):
+    def assert_not_public_error(self, stderr):
+        result = type("CompletedProcess", (), {
+            "returncode": 1,
+            "stderr": stderr,
+            "stdout": "",
+        })()
+        with patch("import_google_drive.subprocess.run", return_value=result):
+            with self.assertRaisesRegex(RuntimeError, DRIVE_NOT_PUBLIC_MESSAGE):
+                run_gdown(["https://drive.google.com/drive/folders/test", "--folder"], 30)
+
+    def test_reports_clear_message_when_drive_folder_is_not_public(self):
+        self.assert_not_public_error(
+            "Failed to retrieve folder contents (status code 500). "
+            "You may need to change the permission to 'Anyone with the link'."
+        )
+
+    def test_reports_clear_message_when_gdown_error_is_hidden_by_cp932(self):
+        self.assert_not_public_error(
+            "'cp932' codec can't encode character '\\xe0': illegal multibyte sequence"
+        )
 
 
 class SelectImagesTests(unittest.TestCase):

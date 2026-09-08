@@ -182,6 +182,7 @@ def main():
         description="Crop raw fabric scans with one fixed normalized rectangle."
     )
     parser.add_argument("--sku", help="Crop one exact raw filename stem")
+    parser.add_argument("--sku-file", help="JSON file containing exact SKU names to crop")
     parser.add_argument("--limit", type=int, help="Crop at most this many files")
     parser.add_argument("--dry-run", action="store_true", help="Show crop selections only")
     parser.add_argument("--force", action="store_true", help="Replace stale cropped images")
@@ -207,7 +208,16 @@ def main():
     signature = crop_signature(box, output_format)
     allow_overwrite = args.force or bool(settings.get("overwrite", False))
     status = load_status(status_path)
+    selected_skus = None
+    if args.sku_file:
+        with open(args.sku_file, "r", encoding="utf-8") as handle:
+            values = json.load(handle)
+        if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+            parser.error("--sku-file must contain a JSON array of non-empty SKU names")
+        selected_skus = {value.casefold() for value in values}
     sources = discover_sources(source_dir, args.sku)
+    if selected_skus is not None:
+        sources = [item for item in sources if item[0].stem.casefold() in selected_skus]
     if not sources:
         print(f"No matching raw images found in {source_dir}")
         return

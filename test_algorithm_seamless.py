@@ -179,6 +179,35 @@ class AlgorithmSeamlessTests(unittest.TestCase):
             )
             self.assertEqual(res2["status"], "already_seamless")
 
+    def test_refine_uses_external_final_path_and_refreshes_raw_backup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            runtime = base / "runtime"
+            external = base / "external" / "output" / "chatgpt" / "GROUP" / "SKU1"
+            textures = base / "external" / "textures" / "GROUP"
+            external.mkdir(parents=True)
+            old = np.full((32, 32, 3), 32, dtype=np.uint8)
+            new = np.full((32, 32, 3), 192, dtype=np.uint8)
+            Image.fromarray(old).save(external / "seamless_texture_chatgpt_raw.png")
+            Image.fromarray(new).save(external / "seamless_texture.png")
+
+            result = algo.refine_chatgpt_texture_seamless(
+                sku="SKU1",
+                folder="GROUP",
+                project_dir=runtime,
+                final_path=external / "seamless_texture.png",
+                texture_path=textures / "texture_SKU1.png",
+                refresh_raw_backup=True,
+                size=32,
+                overlap=4,
+                force=True,
+                verbose=False,
+            )
+
+            with Image.open(external / "seamless_texture_chatgpt_raw.png") as image:
+                self.assertEqual(np.asarray(image)[0, 0, 0], 192)
+            self.assertEqual(result["status"], "refined")
+
     def test_veo3_auto_app_embedded_worker_dispatch_for_algo(self):
         with (
             patch.object(app, "restore_worker_streams"),

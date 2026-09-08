@@ -36,6 +36,11 @@ SUPPORTED_IMAGE_EXTENSIONS = {
     ".tif",
     ".tiff",
 }
+QUALITY_QC_FILENAMES = {
+    "qc_offset50.png",
+    "qc_tile_3x3.png",
+    "qc_tile_15x15.png",
+}
 
 @dataclass(frozen=True)
 class FlowStep:
@@ -516,7 +521,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     /* Output quality tab: keep styles isolated from existing screens. */
     #tab-quality { display: grid; gap: 14px; }
-    #tab-quality .quality-workspace { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(0, 4fr); gap: 14px; }
+    #tab-quality .quality-workspace { display: grid; grid-template-columns: minmax(300px, 3fr) minmax(0, 7fr); gap: 14px; }
     #tab-quality .quality-workspace > .card { height: clamp(420px, 72vh, 900px); min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
     #tab-quality .quality-workspace .card-header-flex { flex-shrink: 0; }
     #tab-quality #quality-active-folder { flex-shrink: 0; overflow-wrap: anywhere; }
@@ -531,7 +536,20 @@ INDEX_HTML = r"""<!doctype html>
       scrollbar-gutter: stable; border: 1px solid var(--line); border-radius: 10px;
       background: #081321; padding: 12px;
     }
-    #tab-quality .quality-grid { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; width: 100%; gap: 12px; }
+    #tab-quality .quality-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; width: 100%; gap: 12px; }
+    #tab-quality .quality-image { position: relative; }
+    #tab-quality .quality-pair { grid-column: span 2; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+    #tab-quality .quality-image.failed { border-color: #ef4444; }
+    #tab-quality .quality-fail-toggle { position: absolute; top: 12px; right: 12px; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border-radius: 5px; background: #081321; border: 1px solid #94a3b8; color: white; font-size: 21px; line-height: 1; }
+    #tab-quality .quality-fail-toggle[aria-checked="true"] { background: #dc2626; border-color: #f87171; }
+    #quality-rerun-dialog { width: min(70vw, 1000px); height: 70vh; max-width: 94vw; max-height: 90vh; margin: auto; padding: 20px; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+    #quality-rerun-dialog::backdrop { background: rgba(0,0,0,.65); }
+    .quality-rerun-content { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+    #quality-rerun-list { flex: 1; min-height: 0; overflow-y: auto; }
+    .quality-rerun-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+    .quality-rerun-row img { width: 56px; height: 56px; object-fit: contain; }
+    .quality-rerun-row input { flex-shrink: 0; }
+    .quality-rerun-actions { display: flex; justify-content: flex-end; gap: 8px; }
     #tab-quality .quality-image { min-width: 0; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
     #tab-quality .quality-image { cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
     #tab-quality .quality-image:hover, #tab-quality .quality-image:focus { border-color: var(--cyan); transform: translateY(-2px); outline: none; box-shadow: 0 8px 22px rgba(0,0,0,.25); }
@@ -544,7 +562,7 @@ INDEX_HTML = r"""<!doctype html>
     #tab-quality .quality-errors { max-height: 140px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); background: #081321; border: 1px solid var(--line); border-radius: 9px; padding: 12px; }
     #tab-quality .quality-errors.has-errors { color: var(--red); border-color: #9f1239; }
     @media(max-width: 480px) {
-      #tab-quality .quality-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+      #tab-quality .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     }
     @media(max-width: 900px) {
       #tab-quality .quality-workspace { grid-template-columns: 1fr; }
@@ -1000,7 +1018,7 @@ INDEX_HTML = r"""<!doctype html>
     </div>
     <div class="quality-workspace">
       <div class="card">
-        <div class="card-header-flex"><h2>Ảnh output mẫu vải</h2><span id="quality-count" class="badge" role="status">0 ảnh</span></div>
+        <div class="card-header-flex"><h2>Ảnh output mẫu vải</h2><button type="button" class="ghost btn-sm" onclick="openQualityRerun()">ChatGPT</button><span id="quality-count" class="badge" role="status">0 ảnh</span></div>
         <div id="quality-active-folder" class="hint" role="status"></div>
         <div class="quality-gallery" tabindex="0" aria-label="Danh sách ảnh mẫu vải có thể cuộn">
           <div id="quality-empty" class="quality-empty"><strong>Chưa có ảnh mẫu vải</strong><span>Chọn folder vải để xem các ảnh output tại đây.</span></div>
@@ -1019,6 +1037,17 @@ INDEX_HTML = r"""<!doctype html>
   </section>
 </main>
 
+<dialog id="quality-rerun-dialog" aria-labelledby="quality-rerun-title">
+  <div class="quality-rerun-content">
+    <h2 id="quality-rerun-title">Tạo lại ảnh fail bằng ChatGPT</h2>
+    <div id="quality-rerun-folder" class="hint"></div>
+    <div class="hint">Chạy lại crop, seamless và swatch cho các SKU đã chọn. Kết quả lưu vào output/chatgpt/&lt;nhóm&gt;/&lt;SKU&gt; trong thư mục dữ liệu app, thay thế kết quả cùng tên tại đó. Các ảnh cùng SKU chỉ chạy một lần.</div>
+    <div><button id="quality-rerun-all" type="button" class="ghost btn-sm" onclick="toggleAllQualityRerun()">Chọn tất cả</button></div>
+    <div id="quality-rerun-list"></div>
+    <div id="quality-rerun-status" role="status"></div>
+    <div class="quality-rerun-actions"><button id="quality-rerun-submit" type="button" class="primary" onclick="submitQualityRerun()">Tạo lại ảnh</button><button type="button" onclick="$('quality-rerun-dialog').close()">Thoát</button></div>
+  </div>
+</dialog>
 <!-- Modal Popup Chi tiết SKU -->
 <div id="sku-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeSkuModal()">
   <div class="modal">
@@ -1507,6 +1536,65 @@ function fabPromptMode() { return $('fab-prompt-mode-manual').checked ? 'manual'
 function flowPromptMode() { return $('flow-prompt-mode-manual').checked ? 'manual' : 'attachment'; }
 
 const qualityImages = new Map();
+let qualityRerunFolder = '';
+function openQualityRerun() {
+  const folder = qualityFolderGroups[activeQualityFolderIndex];
+  if (!folder) { addQualityError('Hãy chọn folder vải trước.'); return; }
+  qualityRerunFolder = folder.path;
+  $('quality-rerun-folder').textContent = folder.path;
+  $('quality-rerun-list').replaceChildren();
+  const failures = folder.images.filter(image => image.failed);
+  for (const file of failures) {
+    const row = document.createElement('label');
+    row.className = 'quality-rerun-row';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = file.path;
+    checkbox.onchange = updateQualityRerunSelection;
+    const img = document.createElement('img');
+    img.src = '/api/quality-image?path=' + encodeURIComponent(file.path);
+    img.alt = ''; img.loading = 'lazy';
+    const name = document.createElement('span');
+    name.textContent = file.relative_path || file.name;
+    name.title = file.path;
+    row.append(checkbox, img, name);
+    $('quality-rerun-list').append(row);
+  }
+  $('quality-rerun-status').textContent = failures.length ? 'Chọn ảnh cần tạo lại.' : 'Folder này không có ảnh được đánh dấu fail.';
+  updateQualityRerunSelection();
+  $('quality-rerun-dialog').showModal();
+}
+function updateQualityRerunSelection() {
+  const all = [...$('quality-rerun-list').querySelectorAll('input')];
+  const count = all.filter(input => input.checked).length;
+  $('quality-rerun-submit').disabled = count === 0;
+  $('quality-rerun-all').disabled = all.length === 0;
+  $('quality-rerun-all').textContent = count === all.length && count ? 'Bỏ chọn tất cả' : 'Chọn tất cả';
+}
+function toggleAllQualityRerun() {
+  const all = [...$('quality-rerun-list').querySelectorAll('input')];
+  const checked = !all.every(input => input.checked);
+  all.forEach(input => input.checked = checked);
+  updateQualityRerunSelection();
+}
+async function submitQualityRerun() {
+  const inputs = [...$('quality-rerun-list').querySelectorAll('input')];
+  const paths = inputs.filter(input => input.checked).map(input => input.value);
+  if (!paths.length || $('quality-rerun-submit').disabled) return;
+  $('quality-rerun-submit').disabled = true;
+  $('quality-rerun-all').disabled = true;
+  inputs.forEach(input => input.disabled = true);
+  try {
+    const result = await api('/api/quality-rerun', {folder: qualityRerunFolder, image_paths: paths});
+    $('quality-rerun-dialog').close();
+    $('quality-active-folder').textContent = `Đã bắt đầu tạo lại ${result.sku_count} SKU qua ChatGPT. Xem tiến trình trong nhật ký.`;
+  } catch (error) {
+    $('quality-rerun-status').textContent = error.message;
+  } finally {
+    inputs.forEach(input => input.disabled = false);
+    updateQualityRerunSelection();
+  }
+}
 const qualityErrors = [];
 let qualityUploading = false;
 let selectedQualityItem = null;
@@ -1598,6 +1686,7 @@ function showQualityFolder(index) {
   $('quality-grid').closest('.quality-gallery').scrollTop = 0;
   const images = folder.images || [];
   const fragment = document.createDocumentFragment();
+  const renderedNodes = new Map();
   for (const file of images) {
     const path = file.relative_path || file.name;
     const key = file.path;
@@ -1621,14 +1710,78 @@ function showQualityFolder(index) {
       caption.textContent = path;
       node.append(img, caption);
       const item = {path: file.path, name: file.name, folder: folder.path, node};
+      const failToggle = document.createElement('button');
+      failToggle.type = 'button';
+      failToggle.className = 'quality-fail-toggle';
+      failToggle.setAttribute('role', 'checkbox');
+      const renderFailure = () => {
+        node.classList.toggle('failed', !!file.failed);
+        failToggle.setAttribute('aria-checked', String(!!file.failed));
+        failToggle.textContent = file.failed ? '×' : '';
+        failToggle.title = file.failed ? 'Bỏ đánh dấu ảnh fail' : 'Đánh dấu ảnh fail';
+        failToggle.setAttribute('aria-label', `${failToggle.title}: ${path}`);
+      };
+      renderFailure();
+      failToggle.onkeydown = event => event.stopPropagation();
+      failToggle.onclick = async event => {
+        event.stopPropagation();
+        failToggle.disabled = true;
+        try {
+          const result = await api('/api/quality-image-failure', {image_path: file.path, failed: !file.failed});
+          file.failed = result.failed;
+          // Also update a newly rendered copy if the user switched folders while saving.
+          qualityFolderGroups.forEach(group => group.images.forEach(image => {
+            if (image.path === file.path) image.failed = result.failed;
+          }));
+          renderFailure();
+          qualityImages.get(file.path)?.renderFailure?.();
+        } catch (error) {
+          addQualityError(`Không lưu được đánh dấu fail: ${error.message}`);
+        } finally {
+          failToggle.disabled = false;
+        }
+      };
+      item.renderFailure = renderFailure;
+      node.append(failToggle);
       node.onclick = () => uploadQualityImage(item);
       node.onkeydown = event => {
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); uploadQualityImage(item); }
       };
       qualityImages.set(key, item);
-      fragment.append(node);
+      renderedNodes.set(key, node);
     } catch (error) {
       addQualityError(`Không thể đọc ảnh ${path}: ${error.message}`);
+    }
+  }
+  const pairName = name => {
+    const lower = (name || '').toLowerCase();
+    return lower === 'seamless_texture.png' ? 'final' :
+      lower === 'seamless_texture_chatgpt_raw.png' ? 'raw' : '';
+  };
+  const parentKey = file => (file.path || '').replace(/\\/g, '/').replace(/\/[^/]*$/, '').toLowerCase();
+  const pairs = new Map();
+  for (const file of images) {
+    const kind = pairName(file.name);
+    if (!kind) continue;
+    const key = parentKey(file);
+    const pair = pairs.get(key) || {};
+    pair[kind] = file;
+    pairs.set(key, pair);
+  }
+  const appended = new Set();
+  for (const file of images) {
+    if (appended.has(file.path) || !renderedNodes.has(file.path)) continue;
+    const pair = pairs.get(parentKey(file));
+    if (pair?.final && pair?.raw && pairName(file.name)) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'quality-pair';
+      wrapper.append(renderedNodes.get(pair.final.path), renderedNodes.get(pair.raw.path));
+      fragment.append(wrapper);
+      appended.add(pair.final.path);
+      appended.add(pair.raw.path);
+    } else {
+      fragment.append(renderedNodes.get(file.path));
+      appended.add(file.path);
     }
   }
   $('quality-grid').append(fragment);
@@ -4130,7 +4283,11 @@ def list_quality_images(folder):
         raise ValueError("Folder vải không tồn tại hoặc không thể đọc.")
     images = []
     for path in sorted(root.rglob("*"), key=lambda item: quality_path_sort_key(item.relative_to(root))):
-        if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+        if (
+            path.is_file()
+            and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+            and path.name.casefold() not in QUALITY_QC_FILENAMES
+        ):
             images.append(
                 {
                     "name": path.name,
@@ -4158,7 +4315,11 @@ def list_quality_folder_groups(folder):
         images = [
             {"name": path.name, "path": str(path.resolve()), "relative_path": path.name}
             for path in sorted(root.iterdir(), key=lambda item: quality_path_sort_key(item.name))
-            if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+            if (
+                path.is_file()
+                and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+                and path.name.casefold() not in QUALITY_QC_FILENAMES
+            )
         ]
         if images:
             groups.append({"name": root.name + " (ảnh trực tiếp)", "path": str(root), "images": images})
@@ -4567,7 +4728,160 @@ class PipelineController:
         folders = list_quality_folder_groups(root)
         with self.lock:
             self.quality_folders.add(root)
+            failures = self.read_quality_failures()["images"]
+            for group in folders:
+                for image in group["images"]:
+                    image["failed"] = os.path.normcase(image["path"]) in failures
         return {"path": str(root), "folders": folders}
+
+    def read_quality_failures(self):
+        path = self.project_dir / "failed_image_logs" / "failed_image_ids.json"
+        if not path.exists():
+            path = self.project_dir / "failed_image_ids.json"
+        if not path.exists():
+            return {"version": 1, "images": {}}
+        # Do not overwrite unreadable or incompatible existing records.
+        with path.open("r", encoding="utf-8") as stream:
+            data = json.load(stream)
+        if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("images"), dict):
+            raise ValueError("failed_image_ids.json không đúng định dạng.")
+        return data
+
+    def set_quality_image_failure(self, payload):
+        if not isinstance(payload.get("failed"), bool):
+            raise ValueError("Trạng thái fail phải là true hoặc false.")
+        image = self.resolve_quality_image(payload.get("image_path"))
+        failed = payload["failed"]
+        key = os.path.normcase(str(image))
+        with self.lock:
+            data = self.read_quality_failures()
+            if failed:
+                root = max((root for root in self.quality_folders if root in image.parents), key=lambda root: len(root.parts))
+                data["images"][key] = {
+                    "image_path": str(image),
+                    "file_name": image.name,
+                    "image_directory": str(image.parent),
+                    "selected_root": str(root),
+                    "relative_path": image.relative_to(root).as_posix(),
+                    "marked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }
+            else:
+                data["images"].pop(key, None)
+            log_dir = self.project_dir / "failed_image_logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            save_json_atomic(log_dir / "failed_image_ids.json", data)
+        return {"image_path": str(image), "failed": failed}
+
+    def prepare_quality_rerun(self, payload):
+        folder = Path(str(payload.get("folder", ""))).resolve()
+        paths = payload.get("image_paths")
+        if not isinstance(paths, list) or not paths:
+            raise ValueError("Hãy chọn ít nhất một ảnh fail.")
+        failures = self.read_quality_failures()["images"]
+        jobs = {}
+        for value in paths:
+            image = self.resolve_quality_image(value)
+            if folder not in image.parents or os.path.normcase(str(image)) not in failures:
+                raise ValueError("Chỉ được chọn ảnh fail trong folder đang xem.")
+            data_root = next((parent for parent in image.parents if (parent / "textures_raw").is_dir() and (parent / "output") in image.parents), None)
+            if data_root is None:
+                raise ValueError(f"Không tìm thấy textures_raw tương ứng với {image}. Cần bộ thư mục nguồn và output cùng gốc.")
+            relative = image.relative_to(data_root / "output")
+            if len(relative.parts) != 4:
+                raise ValueError(f"Không xác định được nhóm/SKU từ {image}; cần output/<engine>/<nhóm>/<SKU>/<ảnh>.")
+            engine, group, sku, _ = relative.parts
+            raw_dir = data_root / "textures_raw" / group
+            if not any(path.is_file() and path.stem == sku and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS for path in raw_dir.glob("*")):
+                raise ValueError(f"Không có ảnh nguồn cho SKU {sku} trong {raw_dir}.")
+            key = str(image.parent)
+            jobs[key] = {"folder": group, "sku": sku, "data_root": data_root,
+                         "output_dir": self.project_dir.resolve() / "output" / "chatgpt" / group}
+        return list(jobs.values())
+
+    def rerun_quality_images(self, payload):
+        with self.lock:
+            if self.is_running():
+                raise ValueError("Một tiến trình đang chạy. Hãy chờ hoàn tất trước khi tạo lại ảnh.")
+            jobs = self.prepare_quality_rerun(payload)
+            first_job = jobs[0]
+            if any(
+                job["folder"] != first_job["folder"] or job["data_root"] != first_job["data_root"]
+                for job in jobs[1:]
+            ):
+                raise ValueError("Các ảnh tạo lại phải thuộc cùng một nhóm dữ liệu để dùng chung một chat.")
+            run_payload = {"engine": "chatgpt", "source_mode": "local", "force": True,
+                           "local_source_dir": str(first_job["data_root"] / "textures_raw" / first_job["folder"]),
+                           "images_per_chat": len(jobs), "limit": str(len(jobs)), "auto_retry_enabled": False,
+                           "flows": {"import": False, "crop": True, "seamless": True, "fabric": False, "package": True}}
+            self.validate_run(run_payload)
+            config = load_json(self.config_path)
+            run_dir = self.project_dir / "failed_image_logs" / datetime.datetime.now().strftime("run_%Y%m%d_%H%M%S_%f")
+            runtime = run_dir / "0"
+            runtime.mkdir(parents=True)
+            if (self.project_dir / "prompts").is_dir():
+                shutil.copytree(self.project_dir / "prompts", runtime / "prompts")
+            settings = json.loads(json.dumps(config))
+            for section in settings.values():
+                if isinstance(section, dict):
+                    for name in ("master_prompt_file", "prompt_file", "user_data_dir"):
+                        if section.get(name):
+                            section[name] = str(resolve_project_path(self.project_dir, os.path.expandvars(section[name])))
+            root, group = first_job["data_root"], first_job["folder"]
+            raw, cropped = str(root / "textures_raw" / group), str(root / "textures_cropped" / group)
+            textures, output = str(root / "textures" / group), str(first_job["output_dir"])
+            for section, values in {
+                "crop": {"source_dir": raw, "output_dir": cropped},
+                "chatgpt_texture_grouped": {"raw_dir": cropped, "textures_dir": textures},
+                "chatgpt_texture": {"raw_dir": cropped},
+                "paths": {"textures_dir": textures, "output_dir": output},
+                "chatgpt": {"output_dir": output},
+                "seamless_package": {"output_dir": output},
+            }.items():
+                settings.setdefault(section, {}).update(values)
+            save_json_atomic(runtime / "config.json", settings)
+            sku_file = runtime / "selected_skus.json"
+            save_json_atomic(sku_file, [job["sku"] for job in jobs])
+            run_payload["sku_file"] = str(sku_file)
+            queue = [{"folder": group, "runtime_dir": str(runtime)}]
+            self.stop_requested.clear()
+            self.quota_alert = None
+            self.log_text = ""
+            self.append_log(f"[Quality] Tạo lại {len(queue)} SKU từ các ảnh fail đã chọn.\n")
+            for job in jobs:
+                self.append_log(f"[Quality] Output {job['sku']}: {job['output_dir'] / job['sku']}\n")
+            self.worker = threading.Thread(
+                target=self.run_quality_queue,
+                args=(queue, run_payload, run_dir),
+                daemon=True,
+            )
+            self.worker.start()
+        return {"ok": True, "sku_count": len(jobs)}
+
+    def run_quality_queue(self, queue, payload, run_dir):
+        """Run failed-image jobs and always remove their isolated runtime data."""
+        try:
+            self.run_queue(queue, payload)
+        finally:
+            runtime = Path(run_dir).resolve()
+            log_root = (self.project_dir / "failed_image_logs").resolve()
+            is_quality_runtime = (
+                runtime.parent == log_root
+                and re.fullmatch(r"run_\d{8}_\d{6}_\d{6}", runtime.name) is not None
+            )
+            if not is_quality_runtime:
+                self.append_log(
+                    f"[WARNING] Không dọn runtime Quality ngoài phạm vi an toàn: {runtime}\n"
+                )
+            else:
+                try:
+                    shutil.rmtree(runtime)
+                    self.append_log(f"[Quality] Đã dọn dữ liệu chạy tạm: {runtime.name}\n")
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    self.append_log(
+                        f"[WARNING] Không thể dọn dữ liệu chạy tạm {runtime.name}: {exc}\n"
+                    )
 
     def resolve_quality_image(self, image_path):
         candidate = Path(str(image_path or "")).resolve()
@@ -4906,9 +5220,12 @@ class PipelineController:
     def build_steps(self, payload, folder=None):
         common = []
         sku = str(payload.get("sku", "")).strip()
+        sku_file = str(payload.get("sku_file", "")).strip()
         limit = str(payload.get("limit", "")).strip()
         if sku:
             common.extend(("--sku", sku))
+        if sku_file:
+            common.extend(("--sku-file", sku_file))
         if limit:
             common.extend(("--limit", limit))
         if bool(payload.get("dry_run")):
@@ -5154,7 +5471,8 @@ class PipelineController:
                     folder_title = folder if folder else "Mặc định (Root)"
                     self.append_log(f"\n--- Đang xử lý thư mục Drive {i+1}/{len(queue)}: [{folder_title}] ---\n")
                     
-                steps = self.build_steps(payload, folder=folder)
+                step_payload = {**payload, "sku": item["sku"]} if "sku" in item else payload
+                steps = self.build_steps(step_payload, folder=folder)
                 
                 for index, (step, arguments) in enumerate(steps, start=1):
                     if self.stop_requested.is_set():
@@ -5170,7 +5488,7 @@ class PipelineController:
                     environment = os.environ.copy()
                     environment["PYTHONIOENCODING"] = "utf-8"
                     environment["PYTHONUTF8"] = "1"
-                    environment[PROJECT_DIR_ENV] = str(self.project_dir.resolve())
+                    environment[PROJECT_DIR_ENV] = item.get("runtime_dir", str(self.project_dir.resolve()))
                     try:
                         self.process = subprocess.Popen(
                             command,
@@ -6184,6 +6502,10 @@ class AppHandler(BaseHTTPRequestHandler):
                 return self.send_json({"path": selected})
             if path == "/api/select-quality-folder":
                 return self.send_json(self.controller.select_quality_folder())
+            if path == "/api/quality-image-failure":
+                return self.send_json(self.controller.set_quality_image_failure(payload))
+            if path == "/api/quality-rerun":
+                return self.send_json(self.controller.rerun_quality_images(payload))
             if path == "/api/upload-quality-image":
                 return self.send_json(self.controller.upload_quality_image(payload))
             if path == "/api/select-prompt-file":

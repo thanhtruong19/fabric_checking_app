@@ -185,9 +185,9 @@ def connect_recovery_page(playwright):
     context = browser.contexts[0]
     context.set_default_timeout(30000)
     context.set_default_navigation_timeout(60000)
-    page = context.new_page()
+    page = legacy.get_automation_chatgpt_page(context)
     page.bring_to_front()
-    print("  [Recovery] Browser connection restored with a fresh tab.")
+    print("  [Recovery] Browser connection restored with the reusable ChatGPT tab.")
     return browser, context, page
 
 
@@ -464,7 +464,9 @@ def download_and_validate_fabric(page, generated_image, sku, target_path):
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
     downloaded_path = DOWNLOAD_DIR / f"{sku}_{stamp}_{os.getpid()}.download"
-    staged_png = DOWNLOAD_DIR / f".{sku}_{stamp}_{os.getpid()}.png"
+    # Atomic replacement requires the staged PNG and output to share a drive.
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    staged_png = target_path.parent / f".{sku}_{stamp}_{os.getpid()}.png"
 
     try:
         with page.expect_download(timeout=TIMEOUT_MS) as download_info:
@@ -714,7 +716,7 @@ def run_batch(args, parser):
             context = browser.contexts[0]
             context.set_default_timeout(30000)
             context.set_default_navigation_timeout(60000)
-            page = context.new_page()
+            page = legacy.get_automation_chatgpt_page(context)
             page.bring_to_front()
 
             queue = list(selected_files)
@@ -831,7 +833,7 @@ def check_browser():
             shared.launch_automation_chrome()
         browser = legacy.connect_to_automation_chrome(playwright)
         context = browser.contexts[0]
-        page = context.new_page()
+        page = legacy.get_automation_chatgpt_page(context)
         page.bring_to_front()
         page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60000)
         page.locator("#prompt-textarea").wait_for(state="visible", timeout=60000)

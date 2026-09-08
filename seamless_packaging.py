@@ -260,6 +260,7 @@ def main():
         description="Copy canonical seamless textures into output/chatgpt/<SKU>."
     )
     parser.add_argument("--sku", help="Package one exact SKU")
+    parser.add_argument("--sku-file", help="JSON file containing exact SKU names to package")
     parser.add_argument("--folder", help="Package textures inside a specific folder")
     parser.add_argument("--limit", type=int, help="Package at most this many textures")
     parser.add_argument("--dry-run", action="store_true", help="Show planned outputs")
@@ -271,6 +272,13 @@ def main():
     config = load_config()
     _, textures_dir, output_root, filename = packaging_paths(config)
     items = discover_textures(textures_dir, selected_sku=args.sku, selected_folder=args.folder)
+    if args.sku_file:
+        with open(args.sku_file, "r", encoding="utf-8") as handle:
+            values = json.load(handle)
+        if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+            parser.error("--sku-file must contain a JSON array of non-empty SKU names")
+        selected_skus = {value.casefold() for value in values}
+        items = [item for item in items if item[0].casefold() in selected_skus]
     if args.limit is not None:
         items = items[: args.limit]
     if not items:

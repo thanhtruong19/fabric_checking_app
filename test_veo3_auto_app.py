@@ -1,9 +1,10 @@
 import json
 import tempfile
 import time
+import threading
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import veo3_auto_app as app
 import run_chatgpt_texture_grouped_batch as grouped
@@ -11,6 +12,179 @@ from prepare_build_assets import create_default_config
 
 
 class VEO3AutoAppTests(unittest.TestCase):
+    def test_chatgpt_workers_reuse_one_tab_without_closing_other_tabs(self):
+        import run_chatgpt_texture_batch as texture
+        context = Mock()
+        unrelated = Mock(url="https://example.com")
+        unrelated.is_closed.return_value = False
+        chat = Mock(url="https://chatgpt.com/c/existing")
+        chat.is_closed.return_value = False
+        context.pages = [unrelated, chat]
+        for _ in range(3):
+            self.assertIs(texture.get_automation_chatgpt_page(context), chat)
+        context.new_page.assert_not_called()
+        unrelated.close.assert_not_called()
+        blank = Mock(url="about:blank")
+        blank.is_closed.return_value = False
+        context.pages = [unrelated, blank]
+        self.assertIs(texture.get_automation_chatgpt_page(context), blank)
+        context.new_page.assert_not_called()
+        chat.is_closed.return_value = True
+        context.pages = [unrelated, chat]
+        self.assertIs(texture.get_automation_chatgpt_page(context), context.new_page.return_value)
+        context.new_page.assert_called_once()
+
+    def test_chatgpt_download_stages_png_beside_output_for_cross_drive_save(self):
+        import run_chatgpt_texture_batch as texture
+        import run_chatgpt_fabric_grouped_batch as fabric
+        for module, download_name, normalize_name in (
+            (texture, "download_and_validate", "normalize_image_to_master"),
+            (fabric, "download_and_validate_fabric", "normalize_image_to_fabric"),
+        ):
+            with self.subTest(module=module.__name__), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                downloads = root / "downloads"
+                downloads.mkdir()
+                target = root / "external_output" / "SKU1" / "image.png"
+                page = MagicMock()
+                page.expect_download.return_value.__enter__.return_value.value.save_as.side_effect = lambda path: Path(path).write_bytes(b"download")
+                def normalize(source, staged):
+                    self.assertEqual(staged.parent, target.parent)
+                    self.assertNotEqual(staged.parent, downloads)
+                    staged.write_bytes(b"valid png")
+                    return {"width": 100, "height": 100}
+                with patch.object(module, "DOWNLOAD_DIR", downloads), patch.object(module, normalize_name, side_effect=normalize):
+                    getattr(module, download_name)(page, MagicMock(), "SKU1", target)
+                self.assertEqual(target.read_bytes(), b"valid png")
+                self.assertEqual(list(downloads.iterdir()), [])
+                self.assertEqual(list(target.parent.iterdir()), [target])
+
+    def test_quality_rerun_uses_selected_skus_and_isolated_external_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            data = root / "external"
+            group = data / "output" / "custom_engine" / "CHKK"
+            raw = data / "textures_raw" / "CHKK"
+            raw.mkdir(parents=True)
+            files = []
+            for sku in ("CHKK1", "CHKK2"):
+                (raw / f"{sku}.jpg").touch()
+                (group / sku).mkdir(parents=True)
+                for name in ("image_1.png", "seamless_texture.png"):
+                    image = group / sku / name
+                    image.touch()
+                    files.append(image)
+            instance = app.PipelineController.__new__(app.PipelineController)
+            instance.project_dir = root
+            instance.lock = threading.RLock()
+            instance.quality_folders = {group.parent}
+            instance.worker = None
+            instance.stop_requested = threading.Event()
+            instance.append_log = Mock()
+            original = {"paths": {"textures_dir": "original"}}
+            (root / "config.json").write_text(json.dumps(original))
+            for image in files:
+                instance.set_quality_image_failure({"image_path": str(image), "failed": True})
+            payload = {"folder": str(group), "image_paths": [str(files[0]), str(files[2])]}
+            with patch.object(app, "valid_project_dir", return_value=True), patch.object(app, "locate_python", return_value=app.sys.executable), patch.object(app.threading, "Thread") as thread:
+                result = instance.rerun_quality_images(payload)
+                self.assertEqual(result["sku_count"], 2)
+                queue, run_payload, run_dir = thread.call_args.kwargs["args"]
+                self.assertEqual(Path(run_dir), Path(queue[0]["runtime_dir"]).parent)
+                self.assertEqual(run_payload["source_mode"], "local")
+                self.assertFalse(run_payload["flows"]["fabric"])
+                self.assertEqual(run_payload["images_per_chat"], 2)
+                self.assertEqual(run_payload["local_source_dir"], str(raw))
+                self.assertNotIn("sku", queue[0])
+                self.assertEqual(
+                    json.loads(Path(run_payload["sku_file"]).read_text(encoding="utf-8")),
+                    ["CHKK1", "CHKK2"],
+                )
+                settings = json.loads((Path(queue[0]["runtime_dir"]) / "config.json").read_text())
+                expected_output = str(root / "output" / "chatgpt" / "CHKK")
+                for section in ("chatgpt", "paths", "seamless_package"):
+                    self.assertEqual(settings[section]["output_dir"], expected_output)
+                self.assertEqual(settings["crop"]["source_dir"], str(raw))
+                self.assertEqual(json.loads((root / "config.json").read_text()), original)
+                steps = instance.build_steps(run_payload, folder="CHKK")
+                self.assertEqual([step.key for step, _ in steps], ["crop", "seamless", "package"])
+                for _, arguments in steps:
+                    self.assertIn("--sku-file", arguments)
+                    self.assertIn(run_payload["sku_file"], arguments)
+                    self.assertIn("--force", arguments)
+                thread.return_value.start.assert_called_once()
+            with self.assertRaises(ValueError):
+                instance.prepare_quality_rerun({"folder": str(group / "CHKK2"), "image_paths": [str(files[0])]})
+            instance.set_quality_image_failure({"image_path": str(files[0]), "failed": False})
+            with self.assertRaises(ValueError):
+                instance.prepare_quality_rerun({"folder": str(group), "image_paths": [str(files[0])]})
+
+    def test_quality_rerun_removes_isolated_runtime_after_worker_finishes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            run_dir = root / "failed_image_logs" / "run_20260908_124234_805031"
+            (run_dir / "0" / "logs").mkdir(parents=True)
+            (run_dir / "0" / "config.json").write_text("{}", encoding="utf-8")
+            instance = app.PipelineController.__new__(app.PipelineController)
+            instance.project_dir = root
+            instance.run_queue = Mock(side_effect=RuntimeError("worker failed"))
+            instance.append_log = Mock()
+
+            with self.assertRaisesRegex(RuntimeError, "worker failed"):
+                instance.run_quality_queue([], {}, run_dir)
+
+            self.assertFalse(run_dir.exists())
+
+    def test_quality_failure_legacy_file_is_preserved_and_migrated_on_write(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            image = root / "image.png"
+            image.touch()
+            legacy = {"version": 1, "images": {"existing": {"image_path": "existing"}}}
+            (root / "failed_image_ids.json").write_text(json.dumps(legacy))
+            instance = app.PipelineController.__new__(app.PipelineController)
+            instance.project_dir = root
+            instance.lock = threading.RLock()
+            instance.quality_folders = {root}
+            instance.set_quality_image_failure({"image_path": str(image), "failed": True})
+            self.assertEqual(len(instance.read_quality_failures()["images"]), 2)
+            self.assertTrue((root / "failed_image_logs" / "failed_image_ids.json").exists())
+
+    def test_quality_failures_persist_reload_and_remove_by_exact_image_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            selected = root / "chatgpt"
+            images = [selected / "CHKK" / code / "image_1.png" for code in ("CHKK1", "CHKK2")]
+            for image in images:
+                image.parent.mkdir(parents=True)
+                image.touch()
+            def controller():
+                instance = app.PipelineController.__new__(app.PipelineController)
+                instance.project_dir = root
+                instance.lock = threading.RLock()
+                instance.quality_folders = {selected}
+                return instance
+            instance = controller()
+            for image in images:
+                instance.set_quality_image_failure({"image_path": str(image), "failed": True})
+            records = json.loads((root / "failed_image_logs" / "failed_image_ids.json").read_text(encoding="utf-8"))["images"]
+            self.assertEqual(len(records), 2)
+            self.assertEqual({record["image_path"] for record in records.values()}, set(map(str, images)))
+            with patch.object(app, "choose_local_folder", return_value=str(selected)):
+                reloaded = controller()
+                self.assertTrue(all(image["failed"] for image in reloaded.select_quality_folder()["folders"][0]["images"]))
+                reloaded.set_quality_image_failure({"image_path": str(images[0]), "failed": False})
+                self.assertEqual([image["failed"] for image in reloaded.select_quality_folder()["folders"][0]["images"]], [False, True])
+            self.assertEqual(len(reloaded.read_quality_failures()["images"]), 1)
+            outside = root / "outside.png"
+            outside.touch()
+            with self.assertRaises(ValueError):
+                instance.set_quality_image_failure({"image_path": str(outside), "failed": True})
+            (root / "failed_image_logs" / "failed_image_ids.json").write_text("broken", encoding="utf-8")
+            with self.assertRaises(json.JSONDecodeError):
+                instance.set_quality_image_failure({"image_path": str(images[0]), "failed": True})
+            self.assertEqual((root / "failed_image_logs" / "failed_image_ids.json").read_text(), "broken")
+
     def test_quality_chatgpt_groups_collect_code_images_in_numeric_order(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "chatgpt"
@@ -18,7 +192,11 @@ class VEO3AutoAppTests(unittest.TestCase):
                 for code in ("NH10", "NH2", "NH1"):
                     folder = root / group / code
                     folder.mkdir(parents=True)
-                    for name in ("image_10.png", "image_2.png", "seamless_texture.png", "metadata.json"):
+                    for name in (
+                        "image_10.png", "image_2.png", "seamless_texture.png",
+                        "QC_offset50.png", "QC_tile_3x3.png", "QC_tile_15x15.png",
+                        "metadata.json",
+                    ):
                         (folder / name).touch()
                 (root / group / "archive.zip").touch()
 

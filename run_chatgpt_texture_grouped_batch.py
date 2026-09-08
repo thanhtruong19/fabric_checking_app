@@ -187,9 +187,9 @@ def connect_recovery_page(playwright):
     context = browser.contexts[0]
     context.set_default_timeout(30000)
     context.set_default_navigation_timeout(60000)
-    page = context.new_page()
+    page = legacy.get_automation_chatgpt_page(context)
     page.bring_to_front()
-    print("  [Recovery] Browser connection restored with a fresh tab.")
+    print("  [Recovery] Browser connection restored with the reusable ChatGPT tab.")
     return browser, context, page
 
 
@@ -264,6 +264,13 @@ def select_files(args, parser, status_data):
     if args.sku and not discovered:
         parser.error(f"Raw texture SKU was not found: {args.sku}")
 
+    if args.sku_file:
+        with open(args.sku_file, "r", encoding="utf-8") as handle:
+            values = json.load(handle)
+        if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+            parser.error("--sku-file must contain a JSON array of non-empty SKU names")
+        selected_skus = {value.casefold() for value in values}
+        discovered = [item for item in discovered if item[0].casefold() in selected_skus]
     selected = []
     skipped_ready = 0
     skipped_exhausted = 0
@@ -504,10 +511,18 @@ def process_turn(
         print(
             f"  Saved {output_info['width']}x{output_info['height']} PNG to {target_path}"
         )
-        package_and_report(sku, target_path, folder=folder, force=force)
+        package_result = package_and_report(sku, target_path, folder=folder, force=force)
         try:
             from run_algorithm_seamless_batch import refine_chatgpt_texture_seamless
-            refine_chatgpt_texture_seamless(sku, folder=folder, project_dir=shared.PROJECT_DIR, verbose=True)
+            refine_chatgpt_texture_seamless(
+                sku,
+                folder=folder,
+                project_dir=shared.PROJECT_DIR,
+                final_path=package_result.get("path"),
+                texture_path=target_path,
+                refresh_raw_backup=force,
+                verbose=True,
+            )
         except Exception as ref_exc:
             print(f"  [Seamless Refiner] Cảnh báo hậu kỳ: {ref_exc}")
         paced_sleep("after_download", "after downloading the generated texture")
@@ -611,6 +626,7 @@ def main():
         )
     )
     parser.add_argument("--sku", help="Process one exact raw-texture SKU")
+    parser.add_argument("--sku-file", help="JSON file containing exact SKU names to process")
     parser.add_argument("--limit", type=int, help="Process at most this many SKUs")
     parser.add_argument(
         "--images-per-chat",
@@ -710,7 +726,7 @@ def main():
         context = browser.contexts[0]
         context.set_default_timeout(30000)
         context.set_default_navigation_timeout(60000)
-        page = context.new_page()
+        page = legacy.get_automation_chatgpt_page(context)
         page.bring_to_front()
         try:
             if args.check_browser:
@@ -820,11 +836,8 @@ def main():
                 else:
                     paced_sleep("between_images", "before attaching the next raw texture")
         finally:
-            try:
-                if not page.is_closed():
-                    page.close()
-            except Exception:
-                pass
+            # Keep this tab open for the swatch step and subsequent SKU workers.
+            pass
 
 
 if __name__ == "__main__":
