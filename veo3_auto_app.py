@@ -159,8 +159,10 @@ INDEX_HTML = r"""<!doctype html>
     /* Drive Folders Manager Styling */
     .drive-manager-box {
       border: 1px solid var(--line); border-radius: 11px; background: #081321;
-      padding: 10px; margin-top: 6px; display: flex; flex-direction: column; gap: 8px;
+      padding: 10px; margin-top: 6px; display: grid;
+      grid-template-rows: repeat(5, 148px); gap: 8px;
     }
+    .drive-folder-placeholder { visibility: hidden; pointer-events: none; }
     .drive-list-toolbar { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
     .drive-list-toolbar input { flex: 1; }
     .drive-list-count { color: var(--muted); font-size: 11px; white-space: nowrap; }
@@ -402,6 +404,40 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 11px; font-weight: 700; color: var(--cyan);
     }
     .tab-nav-btn.active .tab-nav-badge { background: rgba(255,255,255,.2); color: #fff; }
+    .floating-log-nav {
+      position: fixed; top: 50%; right: 18px; z-index: 900;
+      transform: translateY(-50%); min-width: 58px; max-width: 190px;
+      padding: 12px 14px; border-color: rgba(56,189,248,.45);
+      background: rgba(11,23,40,.96); color: #cbd5e1;
+      box-shadow: 0 12px 30px rgba(0,0,0,.35), 0 0 0 1px rgba(56,189,248,.08);
+      backdrop-filter: blur(10px);
+    }
+    .floating-log-nav:hover:not(:disabled) {
+      transform: translateY(-50%) translateX(-3px);
+      color: #fff; border-color: var(--cyan); background: #13243c;
+    }
+    .floating-log-nav.active {
+      color: #fff; border-color: #60a5fa; background: var(--blue);
+      box-shadow: 0 12px 32px rgba(37,99,235,.35);
+    }
+    .floating-log-nav .floating-log-label { line-height: 1.25; text-align: left; }
+    .log-popup {
+      position: fixed; top: 50%; left: 50%; z-index: 950;
+      transform: translate(-50%, -50%); width: min(66vw, 1400px);
+      height: 66vh; min-height: 360px;
+      border: 1px solid rgba(56,189,248,.4); border-radius: 14px;
+      background: rgba(8,19,33,.98);
+      box-shadow: 0 24px 70px rgba(0,0,0,.55), 0 0 0 1px rgba(56,189,248,.08);
+      backdrop-filter: blur(12px); overflow: hidden;
+    }
+    .log-popup-card { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 14px; }
+    .log-popup .log-head { flex: 0 0 auto; }
+    .log-popup #log { flex: 1; min-height: 0; height: auto; margin-bottom: 0; }
+    .log-popup-close {
+      width: 36px; height: 36px; padding: 0; margin-left: 6px;
+      color: #fecdd3; border-color: #9f1239; background: #451826;
+      font-size: 18px;
+    }
 
     /* Prompt Sub-Tabs */
     .prompt-subtabs { display: flex; gap: 6px; margin-bottom: 12px; }
@@ -582,9 +618,13 @@ INDEX_HTML = r"""<!doctype html>
     #tab-quality .quality-errors.has-errors { color: var(--red); border-color: #9f1239; }
     @media(max-width: 480px) {
       #tab-quality .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .floating-log-nav { right: 8px; min-width: 46px; padding: 11px; }
+      .floating-log-nav .floating-log-label { display: none; }
+      .log-popup { width: calc(100vw - 16px); height: 78vh; }
     }
     @media(max-width: 900px) {
       #tab-quality .quality-workspace { grid-template-columns: 1fr; }
+      .drive-manager-box { grid-template-rows: repeat(5, minmax(148px, auto)); }
     }
   </style>
 </head>
@@ -604,17 +644,20 @@ INDEX_HTML = r"""<!doctype html>
       📊 <span>2. Tiến độ & Danh sách vải</span>
       <span id="nav-progress-badge" class="tab-nav-badge">0%</span>
     </button>
-    <button id="nav-tab-logs" class="tab-nav-btn" type="button" onclick="switchTab('logs')">
-      📜 <span>3. Nhật ký thời gian thực</span>
-    </button>
     <button id="nav-tab-audit" class="tab-nav-btn" type="button" onclick="switchTab('audit')">
-      📁 <span>4. Quản lý Drive & So sánh vải</span>
+      📁 <span>3. Quản lý Drive & So sánh vải</span>
       <span id="nav-audit-badge" class="tab-nav-badge">0</span>
     </button>
     <button id="nav-tab-quality" class="tab-nav-btn" type="button" onclick="switchTab('quality')">
-      🔍 <span>5. Test vải</span>
+      🔍 <span>4. Test vải</span>
     </button>
   </nav>
+
+  <button id="nav-tab-logs" class="floating-log-nav" type="button"
+          onclick="openLogPopup()" title="Mở Nhật ký thời gian thực"
+          aria-label="Mở Nhật ký thời gian thực" aria-expanded="false">
+    📜 <span class="floating-log-label">Nhật ký thời gian thực</span>
+  </button>
 
   <!-- Quota Exhausted Alert Banner -->
   <div id="quota-banner" class="quota-banner hidden">
@@ -928,19 +971,18 @@ INDEX_HTML = r"""<!doctype html>
     </div>
   </section>
 
-  <!-- TAB 3: Live Logs -->
-  <section id="tab-logs" class="tab-content hidden">
-    <div class="card wide">
+  <!-- Persistent live-log popup -->
+  <aside id="tab-logs" class="log-popup hidden" role="dialog" aria-modal="false" aria-labelledby="log-popup-title">
+    <div class="log-popup-card">
       <div class="log-head">
-        <h2>Nhật ký thời gian thực</h2>
+        <h2 id="log-popup-title">📜 Nhật ký thời gian thực</h2>
         <div>
-          <button id="clear" class="ghost">Xóa hiển thị</button>
-          <button id="shutdown" class="ghost">Đóng ứng dụng</button>
+          <button class="log-popup-close" type="button" onclick="closeLogPopup()" title="Đóng nhật ký" aria-label="Đóng nhật ký">✕</button>
         </div>
       </div>
-      <pre id="log" style="height: 580px;"></pre>
+      <pre id="log"></pre>
     </div>
-  </section>
+  </aside>
 
   <!-- TAB 4: Google Drive Management & Fabric Folder Comparison -->
   <section id="tab-audit" class="tab-content hidden">
@@ -1277,6 +1319,15 @@ let driveFolderSearch = '';
 let driveFolderPage = 1;
 const DRIVE_FOLDERS_PER_PAGE = 5;
 
+function fillDriveFolderSlots(container, usedSlots) {
+  for (let index = usedSlots; index < DRIVE_FOLDERS_PER_PAGE; index += 1) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'drive-folder-item drive-folder-placeholder';
+    placeholder.setAttribute('aria-hidden', 'true');
+    container.appendChild(placeholder);
+  }
+}
+
 function driveFolderId(url) {
   const match = String(url || '').match(/\/folders\/([^/?#]+)/i);
   return match ? match[1] : '';
@@ -1331,6 +1382,7 @@ function renderDriveFolders(statsList, queueList) {
       ? `Không tìm thấy thư mục khớp với “${driveFolderSearch.trim()}”.`
       : 'Chưa có link Google Drive nào. Hãy thêm link bên dưới.';
     container.appendChild(empty);
+    fillDriveFolderSlots(container, 1);
     return;
   }
 
@@ -1454,6 +1506,7 @@ function renderDriveFolders(statsList, queueList) {
 
     container.appendChild(card);
   });
+  fillDriveFolderSlots(container, pageItems.length);
 }
 
 $('drive-folder-search').addEventListener('input', event => {
@@ -1933,20 +1986,35 @@ let activeTab = 'dashboard';
 let activePromptSubTab = 'texture';
 
 function switchTab(tabId) {
+  if (tabId === 'logs') {
+    openLogPopup();
+    return;
+  }
   activeTab = tabId;
   try { sessionStorage.setItem('veo3_active_tab', tabId); } catch(e) {}
 
   $('tab-dashboard').classList.toggle('hidden', tabId !== 'dashboard');
   $('tab-progress').classList.toggle('hidden', tabId !== 'progress');
-  $('tab-logs').classList.toggle('hidden', tabId !== 'logs');
   $('tab-audit').classList.toggle('hidden', tabId !== 'audit');
   $('tab-quality').classList.toggle('hidden', tabId !== 'quality');
 
   $('nav-tab-dashboard').classList.toggle('active', tabId === 'dashboard');
   $('nav-tab-progress').classList.toggle('active', tabId === 'progress');
-  $('nav-tab-logs').classList.toggle('active', tabId === 'logs');
   $('nav-tab-audit').classList.toggle('active', tabId === 'audit');
   $('nav-tab-quality').classList.toggle('active', tabId === 'quality');
+}
+
+function openLogPopup() {
+  $('tab-logs').classList.remove('hidden');
+  $('nav-tab-logs').classList.add('active');
+  $('nav-tab-logs').setAttribute('aria-expanded', 'true');
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+function closeLogPopup() {
+  $('tab-logs').classList.add('hidden');
+  $('nav-tab-logs').classList.remove('active');
+  $('nav-tab-logs').setAttribute('aria-expanded', 'false');
 }
 
 function switchPromptSubTab(subTabId) {
@@ -2572,11 +2640,6 @@ $('stop').onclick = () => {
 $('chrome').onclick = () => api('/api/chrome', {}).catch(toastError);
 $('check').onclick = () => api('/api/check-browser', {}).catch(toastError);
 $('check-flow').onclick = () => api('/api/check-flow-browser', {}).catch(toastError);
-$('clear').onclick = () => { localLog = ''; $('log').textContent = ''; };
-$('shutdown').onclick = () => {
-  if (confirm('Đóng VEO3 Auto Pipeline?')) api('/api/shutdown', {}).then(() => window.close()).catch(toastError);
-};
-
 async function fetchState() {
   try {
     const filterParam = '?folder=' + encodeURIComponent(currentSelectedFolder || 'all');
@@ -5636,11 +5699,12 @@ class PipelineController:
 
         save_json_atomic(self.config_path, config)
 
-    def start_pipeline(self, payload):
+    def start_pipeline(self, payload, persist_settings=True):
         if self.is_running():
             raise RuntimeError("Một tiến trình đang chạy.")
         self.validate_run(payload)
-        self.save_settings(payload)
+        if persist_settings:
+            self.save_settings(payload)
         self.stop_requested.clear()
         self.append_log("\n" + "=" * 72 + "\nBắt đầu pipeline\n")
         
@@ -6308,7 +6372,7 @@ class PipelineController:
         engine_label = "Thuật toán CV" if engine in {"algo", "algorithm"} else "Google Flow" if engine in {"flow", "google_flow"} else "ChatGPT"
         missing_text = f", Chỉ tạo: {', '.join(missing_labels)}" if missing_labels else ""
         self.append_log(f"\n[YÊU CẦU] Chạy riêng SKU ({engine_label}): {sku} (Folder: {folder or 'Mặc định'}, Force: {force}{missing_text})\n")
-        self.start_pipeline(run_payload)
+        self.start_pipeline(run_payload, persist_settings=False)
         return {"ok": True, "started": True, "missing": missing_labels}
 
     def delete_drive_folder(self, payload):

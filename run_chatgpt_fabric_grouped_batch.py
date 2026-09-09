@@ -438,12 +438,10 @@ def wait_for_generated_image(page, previous_sources, turn_number, images_per_cha
         )
 
         if not is_still_generating:
-            images = page.locator('main img[alt^="Generated image:"]')
-            for index in range(images.count() - 1, -1, -1):
-                candidate = images.nth(index)
-                source = candidate.get_attribute("src")
-                if source and source not in previous_sources and candidate.is_visible():
-                    return candidate
+            legacy.dismiss_image_comparison(page)
+            candidate = legacy.first_new_generated_image(page, previous_sources)
+            if candidate is not None:
+                return candidate
 
         elapsed = int(TIMEOUT_MS / 1000 - max(0, deadline - time.monotonic()))
         if elapsed - last_progress >= 30:
@@ -466,7 +464,11 @@ def download_and_validate_fabric(page, generated_image, sku, target_path):
     ).last
     close_button.wait_for(state="visible", timeout=15000)
     save_button = page.get_by_role(
-        "button", name=re.compile(r"^(Save|Download|Tải xuống)$")
+        "button",
+        name=re.compile(
+            r"^(Save|Download|Download image|Tải xuống|Tải hình ảnh)$",
+            re.IGNORECASE,
+        ),
     ).last
     save_button.wait_for(state="visible", timeout=15000)
 

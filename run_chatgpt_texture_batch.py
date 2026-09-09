@@ -372,6 +372,36 @@ def generated_sources(page):
     return sources
 
 
+def dismiss_image_comparison(page):
+    """Dismiss ChatGPT's optional two-image preference prompt."""
+    try:
+        skip_controls = page.get_by_text(
+            re.compile(r"^(Skip|Bỏ qua)$", re.IGNORECASE), exact=True
+        )
+        for index in range(skip_controls.count() - 1, -1, -1):
+            control = skip_controls.nth(index)
+            if control.is_visible():
+                control.click()
+                page.wait_for_timeout(500)
+                print("  ChatGPT returned an image comparison; skipped it and selected image 1.")
+                return True
+    except Exception:
+        # This prompt is optional and may disappear while the DOM is being read.
+        pass
+    return False
+
+
+def first_new_generated_image(page, previous_sources):
+    """Return image 1 when ChatGPT produces one or more new images."""
+    images = page.locator('main img[alt^="Generated image:"]')
+    for index in range(images.count()):
+        candidate = images.nth(index)
+        source = candidate.get_attribute("src")
+        if source and source not in previous_sources and candidate.is_visible():
+            return candidate
+    return None
+
+
 def record_conversation(page, sku, sku_status):
     if not is_conversation_url(page.url):
         return None
@@ -395,12 +425,10 @@ def wait_for_generated_image(page, previous_sources):
         if stop_reason:
             raise RuntimeError(f"SAFE_STOP_REQUIRED: {stop_reason}")
 
-        images = page.locator('main img[alt^="Generated image:"]')
-        for index in range(images.count() - 1, -1, -1):
-            candidate = images.nth(index)
-            source = candidate.get_attribute("src")
-            if source and source not in previous_sources and candidate.is_visible():
-                return candidate
+        dismiss_image_comparison(page)
+        candidate = first_new_generated_image(page, previous_sources)
+        if candidate is not None:
+            return candidate
 
         elapsed = int(TIMEOUT_MS / 1000 - max(0, deadline - time.monotonic()))
         if elapsed - last_progress >= 30:
@@ -490,7 +518,11 @@ def download_and_validate(page, generated_image, sku, target_path):
     ).last
     close_button.wait_for(state="visible", timeout=15000)
     save_button = page.get_by_role(
-        "button", name=re.compile(r"^(Save|Download|Tải xuống)$")
+        "button",
+        name=re.compile(
+            r"^(Save|Download|Download image|Tải xuống|Tải hình ảnh)$",
+            re.IGNORECASE,
+        ),
     ).last
     save_button.wait_for(state="visible", timeout=15000)
 

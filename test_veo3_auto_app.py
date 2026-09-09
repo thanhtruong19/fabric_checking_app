@@ -64,6 +64,43 @@ class VEO3AutoAppTests(unittest.TestCase):
         self.assertIs(texture.get_automation_chatgpt_page(context), context.new_page.return_value)
         context.new_page.assert_called_once()
 
+    def test_chatgpt_series_selects_first_new_generated_image(self):
+        import run_chatgpt_texture_batch as texture
+
+        old_image = MagicMock()
+        old_image.get_attribute.return_value = "old"
+        old_image.is_visible.return_value = True
+        first_image = MagicMock()
+        first_image.get_attribute.return_value = "new-1"
+        first_image.is_visible.return_value = True
+        second_image = MagicMock()
+        second_image.get_attribute.return_value = "new-2"
+        second_image.is_visible.return_value = True
+        images = MagicMock()
+        images.count.return_value = 3
+        images.nth.side_effect = [old_image, first_image, second_image]
+        page = MagicMock()
+        page.locator.return_value = images
+
+        selected = texture.first_new_generated_image(page, {"old"})
+
+        self.assertIs(selected, first_image)
+        second_image.get_attribute.assert_not_called()
+
+    def test_chatgpt_comparison_is_skipped_when_visible(self):
+        import run_chatgpt_texture_batch as texture
+
+        skip = MagicMock()
+        skip.is_visible.return_value = True
+        controls = MagicMock()
+        controls.count.return_value = 1
+        controls.nth.return_value = skip
+        page = MagicMock()
+        page.get_by_text.return_value = controls
+
+        self.assertTrue(texture.dismiss_image_comparison(page))
+        skip.click.assert_called_once()
+
     def test_chatgpt_download_stages_png_beside_output_for_cross_drive_save(self):
         import run_chatgpt_texture_batch as texture
         import run_chatgpt_fabric_grouped_batch as fabric
@@ -582,6 +619,7 @@ class VEO3AutoAppTests(unittest.TestCase):
 
                     self.assertTrue(result["started"])
                     run_payload = controller.start_pipeline.call_args.args[0]
+                    self.assertFalse(controller.start_pipeline.call_args.kwargs["persist_settings"])
                     self.assertFalse(run_payload["flows"]["import"])
                     for key, value in expected.items():
                         self.assertEqual(run_payload["flows"][key], value)
@@ -606,6 +644,24 @@ class VEO3AutoAppTests(unittest.TestCase):
 
             self.assertFalse(result["started"])
             controller.start_pipeline.assert_not_called()
+
+    def test_transient_pipeline_does_not_persist_ui_settings(self):
+        controller = app.PipelineController.__new__(app.PipelineController)
+        controller.worker = None
+        controller.stop_requested = threading.Event()
+        controller.append_log = Mock()
+        controller.validate_run = Mock()
+        controller.save_settings = Mock()
+        worker = Mock()
+        with patch.object(app.threading, "Thread", return_value=worker):
+            controller.start_pipeline(
+                {"source_mode": "local", "images_per_chat": 1},
+                persist_settings=False,
+            )
+
+        controller.validate_run.assert_called_once()
+        controller.save_settings.assert_not_called()
+        worker.start.assert_called_once()
 
     def test_compute_drive_folders_stats_and_filter(self):
         with tempfile.TemporaryDirectory() as temporary:
