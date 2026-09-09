@@ -12,6 +12,36 @@ from prepare_build_assets import create_default_config
 
 
 class VEO3AutoAppTests(unittest.TestCase):
+    def test_drive_items_are_deduplicated_by_folder_id(self):
+        items = [
+            {"url": "https://drive.google.com/drive/folders/ABC?usp=drive_link", "folder": "FIRST"},
+            {"url": "https://drive.google.com/drive/folders/ABC?usp=sharing", "folder": "SECOND"},
+            {"url": "https://drive.google.com/drive/folders/XYZ", "folder": "OTHER"},
+        ]
+
+        unique = app.deduplicate_drive_items(items)
+
+        self.assertEqual([item["folder"] for item in unique], ["FIRST", "OTHER"])
+
+    def test_fabric_worker_discovers_only_final_seamless_as_input(self):
+        import run_chatgpt_fabric_grouped_batch as fabric
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sku_dir = root / "ABC1"
+            sku_dir.mkdir()
+            (sku_dir / "seamless_texture.png").touch()
+            (sku_dir / "seamless_texture_chatgpt_raw.png").touch()
+            (sku_dir / "QC_tile_3x3.png").touch()
+            parser = Mock()
+            with (
+                patch.object(fabric, "RAW_DIR", root),
+                patch.object(fabric, "FALLBACK_RAW_DIR", root),
+                patch.object(fabric, "INPUT_MODE", "seamless"),
+            ):
+                discovered = fabric.discover_input_files(parser)
+
+            self.assertEqual(discovered, [("ABC1", sku_dir / "seamless_texture.png", None)])
+
     def test_chatgpt_workers_reuse_one_tab_without_closing_other_tabs(self):
         import run_chatgpt_texture_batch as texture
         context = Mock()
@@ -369,10 +399,19 @@ class VEO3AutoAppTests(unittest.TestCase):
             source.mkdir()
             (source / "SKU001.jpg").write_bytes(b"source-1")
             (source / "SKU002.png").write_bytes(b"source-2")
+            (source / "SKU003.png").write_bytes(b"source-3")
+            (source / "SKU004.png").write_bytes(b"source-4")
             (source / "notes.txt").write_text("ignore", encoding="utf-8")
             destination = root / "output" / "chatgpt" / "SKU001"
             destination.mkdir(parents=True)
             (destination / "seamless_texture.png").write_bytes(b"output")
+            (destination / "image_1.png").write_bytes(b"swatch")
+            seamless_only = root / "output" / "chatgpt" / "SKU002"
+            seamless_only.mkdir(parents=True)
+            (seamless_only / "seamless_texture.png").write_bytes(b"output")
+            swatch_only = root / "output" / "chatgpt" / "SKU003"
+            swatch_only.mkdir(parents=True)
+            (swatch_only / "image_1.png").write_bytes(b"swatch")
             config = {
                 "google_drive": {"destination_dir": "textures_raw"},
                 "crop": {"output_dir": "textures_cropped"},
@@ -384,10 +423,14 @@ class VEO3AutoAppTests(unittest.TestCase):
 
             progress = app.fabric_progress(root, config)
 
-            self.assertEqual(progress["total"], 2)
-            self.assertEqual(progress["percent"], 50)
-            self.assertEqual(progress["created"], ["SKU001"])
-            self.assertEqual(progress["pending"], ["SKU002"])
+            self.assertEqual(progress["total"], 4)
+            self.assertEqual(progress["percent"], 25)
+            self.assertEqual([item["sku"] for item in progress["created"]], ["SKU001"])
+            self.assertEqual([item["sku"] for item in progress["pending"]], ["SKU002", "SKU003", "SKU004"])
+            self.assertEqual(
+                [(item["has_seamless"], item["has_fabric"]) for item in progress["pending"]],
+                [(True, False), (False, True), (False, False)],
+            )
 
     def test_local_source_is_saved_and_drive_import_is_skipped(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -454,9 +497,115 @@ class VEO3AutoAppTests(unittest.TestCase):
             self.assertIn("ABC", saved["chatgpt_texture_grouped"]["raw_dir"])
             self.assertIn("ABC", saved["chatgpt_fabric_grouped"]["raw_dir"])
             self.assertIn("ABC", saved["chatgpt_fabric_grouped"]["output_dir"])
+            self.assertEqual(saved["chatgpt_fabric_grouped"]["input_mode"], "seamless")
             self.assertIn("ABC", saved["seamless_package"]["output_dir"])
             self.assertIn("ABC", saved["paths"]["textures_dir"])
             self.assertIn("ABC", saved["paths"]["output_dir"])
+
+    def test_swatch_prerequisites_report_only_missing_seamless_skus(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = root / "textures_raw" / "ABC"
+            raw.mkdir(parents=True)
+            (raw / "ABC1.jpg").touch()
+            (raw / "ABC2.jpg").touch()
+            (root / "config.json").write_text(json.dumps({"google_drive": {}}), encoding="utf-8")
+            ready = root / "output" / "chatgpt" / "ABC" / "ABC1"
+            ready.mkdir(parents=True)
+            Image.new("RGB", (8, 8), "black").save(ready / "seamless_texture.png")
+            controller = app.PipelineController.__new__(app.PipelineController)
+            controller.project_dir = root
+
+            result = controller.check_swatch_prerequisites({
+                "source_mode": "drive",
+                "folder": "ABC",
+            })
+
+            self.assertEqual(result["checked_count"], 2)
+            self.assertEqual(result["missing_skus"], ["ABC/ABC2"])
+
+    def test_swatch_prerequisites_use_drive_listing_before_import(self):
+        import import_google_drive
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config.json").write_text(json.dumps({"google_drive": {}}), encoding="utf-8")
+            controller = app.PipelineController.__new__(app.PipelineController)
+            controller.project_dir = root
+            remote_images = [
+                {"name": "NEW1.jpg"},
+                {"name": "NEW2.jpg"},
+            ]
+            with (
+                patch.object(import_google_drive, "list_public_folder", return_value=[]),
+                patch.object(import_google_drive, "select_images", return_value=(remote_images, 0, 0)),
+            ):
+                result = controller.check_swatch_prerequisites({
+                    "source_mode": "drive",
+                    "folder": "NEW",
+                    "url": "https://drive.google.com/drive/folders/test",
+                    "flows": {"import": True},
+                })
+
+            self.assertEqual(result["checked_count"], 2)
+            self.assertEqual(result["missing_skus"], ["NEW/NEW1", "NEW/NEW2"])
+
+    def test_single_sku_chatgpt_runs_only_missing_output_stages(self):
+        cases = (
+            (False, False, {"crop": True, "seamless": True, "fabric": True, "package": True}),
+            (True, False, {"crop": False, "seamless": False, "fabric": True, "package": False}),
+            (False, True, {"crop": True, "seamless": True, "fabric": False, "package": True}),
+        )
+        for has_seamless, has_fabric, expected in cases:
+            with self.subTest(has_seamless=has_seamless, has_fabric=has_fabric):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    sku_dir = root / "output" / "chatgpt" / "ABC" / "ABC1"
+                    sku_dir.mkdir(parents=True)
+                    if has_seamless:
+                        (sku_dir / "seamless_texture.png").write_bytes(b"seamless")
+                    if has_fabric:
+                        (sku_dir / "image_1.png").write_bytes(b"swatch")
+                    (root / "config.json").write_text(
+                        json.dumps({"app_ui": {"source_mode": "drive"}, "google_drive": {}}),
+                        encoding="utf-8",
+                    )
+                    controller = app.PipelineController.__new__(app.PipelineController)
+                    controller.project_dir = root
+                    controller.append_log = Mock()
+                    controller.apply_folder_config = Mock()
+                    controller.start_pipeline = Mock()
+
+                    result = controller.run_single_sku({
+                        "sku": "ABC1", "folder": "ABC", "engine": "chatgpt", "images_per_chat": 1,
+                    })
+
+                    self.assertTrue(result["started"])
+                    run_payload = controller.start_pipeline.call_args.args[0]
+                    self.assertFalse(run_payload["flows"]["import"])
+                    for key, value in expected.items():
+                        self.assertEqual(run_payload["flows"][key], value)
+
+    def test_single_sku_chatgpt_skips_when_both_outputs_exist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sku_dir = root / "output" / "chatgpt" / "ABC" / "ABC1"
+            sku_dir.mkdir(parents=True)
+            (sku_dir / "seamless_texture.png").write_bytes(b"seamless")
+            (sku_dir / "image_1.png").write_bytes(b"swatch")
+            (root / "config.json").write_text(
+                json.dumps({"app_ui": {"source_mode": "drive"}, "google_drive": {}}),
+                encoding="utf-8",
+            )
+            controller = app.PipelineController.__new__(app.PipelineController)
+            controller.project_dir = root
+            controller.append_log = Mock()
+            controller.start_pipeline = Mock()
+
+            result = controller.run_single_sku({"sku": "ABC1", "folder": "ABC", "engine": "chatgpt"})
+
+            self.assertFalse(result["started"])
+            controller.start_pipeline.assert_not_called()
 
     def test_compute_drive_folders_stats_and_filter(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -495,7 +644,7 @@ class VEO3AutoAppTests(unittest.TestCase):
             stats = app.compute_drive_folders_stats(root, config)
             self.assertEqual(stats["total_folders"], 2)
             self.assertEqual(stats["total_skus"], 3)
-            self.assertEqual(stats["total_created"], 2)
+            self.assertEqual(stats["total_created"], 1)
 
             abc_stat = next(s for s in stats["folders"] if s["folder"] == "ABC")
             self.assertEqual(abc_stat["total"], 2)
@@ -505,19 +654,22 @@ class VEO3AutoAppTests(unittest.TestCase):
 
             xyz_stat = next(s for s in stats["folders"] if s["folder"] == "XYZ")
             self.assertEqual(xyz_stat["total"], 1)
-            self.assertEqual(xyz_stat["created_count"], 1)
-            self.assertEqual(xyz_stat["percent"], 100)
+            self.assertEqual(xyz_stat["created_count"], 0)
+            self.assertEqual(xyz_stat["pending_count"], 1)
+            self.assertEqual(xyz_stat["percent"], 0)
 
             # Test fabric_progress with folder_filter
             prog_abc = app.fabric_progress(root, config, folder_filter="ABC")
             self.assertEqual(prog_abc["total"], 2)
-            self.assertEqual(prog_abc["created"], ["SKU_A1"])
-            self.assertEqual(prog_abc["pending"], ["SKU_A2"])
+            self.assertEqual([item["sku"] for item in prog_abc["created"]], ["SKU_A1"])
+            self.assertEqual([item["sku"] for item in prog_abc["pending"]], ["SKU_A2"])
 
             prog_xyz = app.fabric_progress(root, config, folder_filter="XYZ")
             self.assertEqual(prog_xyz["total"], 1)
-            self.assertEqual(prog_xyz["created"], ["SKU_X1"])
-            self.assertEqual(prog_xyz["pending"], [])
+            self.assertEqual(prog_xyz["created"], [])
+            self.assertEqual([item["sku"] for item in prog_xyz["pending"]], ["SKU_X1"])
+            self.assertTrue(prog_xyz["pending"][0]["has_seamless"])
+            self.assertFalse(prog_xyz["pending"][0]["has_fabric"])
 
     def test_grouped_texture_browser_close_keeps_sku_pending_without_retry_cost(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -609,6 +761,28 @@ class VEO3AutoAppTests(unittest.TestCase):
             stats = app.compute_historical_timing_stats(root)
             self.assertEqual(stats["completed_count"], 1)
             self.assertEqual(stats["avg_duration_seconds"], 85.0)
+
+    def test_sku_details_do_not_use_swatch_or_intermediate_texture_as_seamless(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sku_dir = root / "output" / "chatgpt" / "DEHQ" / "DEHQ2"
+            sku_dir.mkdir(parents=True)
+            (sku_dir / "image_1.png").write_bytes(b"swatch")
+            texture_dir = root / "textures" / "DEHQ"
+            texture_dir.mkdir(parents=True)
+            (texture_dir / "texture_DEHQ2.png").write_bytes(b"intermediate")
+            (root / "config.json").write_text(
+                json.dumps({"seamless_package": {"filename": "seamless_texture.png"}}),
+                encoding="utf-8",
+            )
+
+            details = app.get_sku_details(root, "DEHQ2", folder="DEHQ")
+
+            self.assertIsNone(app.get_image_file(root, "DEHQ2", "final_seamless", folder="DEHQ"))
+            self.assertIsNone(details["output"])
+            self.assertIsNone(details["seamless"])
+            self.assertIsNotNone(details["fabric"])
+            self.assertFalse(details["is_created"])
 
     def test_seamless_packaging_and_organization_for_drive_folders(self):
         with tempfile.TemporaryDirectory() as temporary:

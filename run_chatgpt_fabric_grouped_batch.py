@@ -32,6 +32,7 @@ CHATGPT_SETTINGS = shared.config.get("chatgpt", {})
 RAW_DIR = shared.resolve_path(
     SETTINGS.get("raw_dir", "textures_cropped")
 )
+INPUT_MODE = str(SETTINGS.get("input_mode", "seamless")).strip().lower()
 FALLBACK_RAW_DIR = shared.resolve_path(
     shared.config.get("chatgpt_texture", {}).get("raw_dir", "textures_raw")
 )
@@ -266,19 +267,26 @@ def discover_input_files(parser, selected_sku=None):
         return []
     files = []
     for path in sorted(active_dir.rglob("*")):
-        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
+        if INPUT_MODE == "seamless":
+            eligible = path.is_file() and path.name.casefold() == "seamless_texture.png"
+        else:
+            eligible = path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+        if eligible:
             files.append(path)
     keyed = {}
     duplicates = {}
     for path in files:
-        sku = path.stem
+        sku = path.parent.name if INPUT_MODE == "seamless" else path.stem
         if selected_sku and sku != selected_sku:
             continue
-        try:
-            rel = path.parent.relative_to(active_dir)
-            folder = str(rel) if str(rel) != "." else None
-        except Exception:
+        if INPUT_MODE == "seamless":
             folder = None
+        else:
+            try:
+                rel = path.parent.relative_to(active_dir)
+                folder = str(rel) if str(rel) != "." else None
+            except Exception:
+                folder = None
         if sku in keyed:
             duplicates.setdefault(sku, [keyed[sku]]).append((path, folder))
         else:

@@ -161,6 +161,13 @@ INDEX_HTML = r"""<!doctype html>
       border: 1px solid var(--line); border-radius: 11px; background: #081321;
       padding: 10px; margin-top: 6px; display: flex; flex-direction: column; gap: 8px;
     }
+    .drive-list-toolbar { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+    .drive-list-toolbar input { flex: 1; }
+    .drive-list-count { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .drive-pagination {
+      display: flex; align-items: center; justify-content: center; gap: 8px; padding-top: 4px;
+    }
+    .drive-page-info { color: var(--muted); font-size: 12px; min-width: 90px; text-align: center; }
     .drive-folder-item {
       border: 1px solid var(--line); border-radius: 9px; background: #0f1c2e;
       padding: 10px 12px; display: flex; flex-direction: column; gap: 6px;
@@ -289,6 +296,18 @@ INDEX_HTML = r"""<!doctype html>
     }
     .sku-dot.ok { background: var(--green); }
     .sku-dot.pending { background: var(--amber); }
+    .sku-statuses { width: 100%; display: grid; gap: 3px; margin-top: 5px; }
+    .sku-status-pill {
+      display: flex; align-items: center; gap: 4px; border-radius: 999px; padding: 3px 6px;
+      font-size: 9px; font-weight: 700; line-height: 1; border: 1px solid transparent;
+    }
+    .sku-status-pill.ok { color: #a7f3d0; background: rgba(16,185,129,.2); border-color: rgba(52,211,153,.3); }
+    .sku-status-pill.missing { color: #fecaca; background: rgba(239,68,68,.2); border-color: rgba(248,113,113,.3); }
+    .progress-rule {
+      margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(56,189,248,.25);
+      border-radius: 10px; background: rgba(14,116,144,.08); color: var(--muted); font-size: 11px;
+    }
+    .progress-rule strong { color: var(--cyan); display: block; margin-bottom: 4px; }
 
     .paths { color: var(--muted); font-size: 12px; margin-top: 10px; overflow-wrap: anywhere; }
     .log-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 9px; }
@@ -620,7 +639,16 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <div id="drive-source">
             <label>Danh sách & Quản lý thư mục Google Drive</label>
+            <div class="drive-list-toolbar">
+              <input id="drive-folder-search" type="text" placeholder="🔎 Tìm theo tên thư mục..." autocomplete="off">
+              <span id="drive-folder-count" class="drive-list-count"></span>
+            </div>
             <div id="drive-folders-list" class="drive-manager-box"></div>
+            <div id="drive-pagination" class="drive-pagination hidden">
+              <button id="drive-page-prev" type="button" class="ghost btn-sm">← Trước</button>
+              <span id="drive-page-info" class="drive-page-info"></span>
+              <button id="drive-page-next" type="button" class="ghost btn-sm">Sau →</button>
+            </div>
             
             <div style="margin-top: 10px;">
               <label>Thêm Link Drive mới</label>
@@ -847,8 +875,8 @@ INDEX_HTML = r"""<!doctype html>
       <div class="progress-summary">
         <div class="metric"><strong id="fabric-percent">0%</strong><span>Tiến độ</span></div>
         <div class="metric"><strong id="fabric-total">0</strong><span>Tổng SKU</span></div>
-        <div class="metric"><strong id="fabric-created" class="ok">0</strong><span>Đã tạo</span></div>
-        <div class="metric"><strong id="fabric-pending" class="amber">0</strong><span>Chưa tạo</span></div>
+        <div class="metric"><strong id="fabric-created" class="ok">0</strong><span>Đã tạo</span><div class="sub">Có đủ Seamless và Swatch</div></div>
+        <div class="metric"><strong id="fabric-pending" class="amber">0</strong><span>Chưa tạo</span><div class="sub">Thiếu Seamless hoặc Swatch</div></div>
       </div>
       <div class="fabric-progress"><span id="fabric-progress-bar"></span></div>
       
@@ -870,9 +898,9 @@ INDEX_HTML = r"""<!doctype html>
           <div id="avg-calc-sub" class="sub">Dựa trên lịch sử ChatGPT</div>
         </div>
         <div class="metric">
-          <strong id="eta-time">--</strong>
-          <span>Ước tính còn lại (ETA)</span>
-          <div class="sub" id="eta-sub">Dự kiến hoàn thành</div>
+          <strong id="eta-time">Theo quy tắc</strong>
+          <span>Trạng thái hoàn thiện</span>
+          <div class="sub" id="eta-sub">Cần đủ Seamless (01) và Swatch (02)</div>
         </div>
       </div>
 
@@ -891,6 +919,10 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <div id="pending-list" class="sku-grid"></div>
         </div>
+      </div>
+      <div class="progress-rule">
+        <strong>ℹ Quy tắc tính trạng thái</strong>
+        Chỉ những SKU có đủ cả <b>seamless_texture.png</b> và <b>image_1.png</b> mới được tính là “Đã tạo”. Thiếu một trong hai hoặc thiếu cả hai sẽ được tính là “Chưa tạo”.
       </div>
       <div id="fabric-paths" class="paths"></div>
     </div>
@@ -1241,6 +1273,14 @@ let lastPendingList = [];
 let driveUrlsQueue = [];
 let driveFoldersStats = [];
 let currentSelectedFolder = 'all';
+let driveFolderSearch = '';
+let driveFolderPage = 1;
+const DRIVE_FOLDERS_PER_PAGE = 5;
+
+function driveFolderId(url) {
+  const match = String(url || '').match(/\/folders\/([^/?#]+)/i);
+  return match ? match[1] : '';
+}
 
 function renderDriveFolders(statsList, queueList) {
   const container = $('drive-folders-list');
@@ -1251,6 +1291,8 @@ function renderDriveFolders(statsList, queueList) {
     folder: q.folder || '',
     folder_display: q.folder || 'Mặc định',
     url: q.url || '',
+    modified_at: q.modified_at || '',
+    modified_ts: Date.parse(q.modified_at || '') || 0,
     total: 0,
     created_count: 0,
     pending_count: 0,
@@ -1258,17 +1300,41 @@ function renderDriveFolders(statsList, queueList) {
     is_active: false
   }));
 
-  if (!items.length) {
+  const sortedItems = [...items].sort((a, b) => {
+    const aModified = Number(a.modified_ts || Date.parse(a.modified_at || '') || 0);
+    const bModified = Number(b.modified_ts || Date.parse(b.modified_at || '') || 0);
+    return bModified - aModified || String(a.folder_display || a.folder || '').localeCompare(String(b.folder_display || b.folder || ''), 'vi');
+  });
+  const query = driveFolderSearch.trim().toLocaleLowerCase('vi');
+  const filteredItems = query
+    ? sortedItems.filter(item => String(item.folder_display || item.folder || '').toLocaleLowerCase('vi').includes(query))
+    : sortedItems;
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / DRIVE_FOLDERS_PER_PAGE));
+  driveFolderPage = Math.min(Math.max(1, driveFolderPage), totalPages);
+  const pageStart = (driveFolderPage - 1) * DRIVE_FOLDERS_PER_PAGE;
+  const pageItems = filteredItems.slice(pageStart, pageStart + DRIVE_FOLDERS_PER_PAGE);
+
+  $('drive-folder-count').textContent = query
+    ? `${filteredItems.length}/${items.length} thư mục`
+    : `${items.length} thư mục`;
+  $('drive-pagination').classList.toggle('hidden', filteredItems.length <= DRIVE_FOLDERS_PER_PAGE);
+  $('drive-page-info').textContent = `Trang ${driveFolderPage}/${totalPages}`;
+  $('drive-page-prev').disabled = driveFolderPage <= 1;
+  $('drive-page-next').disabled = driveFolderPage >= totalPages;
+
+  if (!items.length || !pageItems.length) {
     const empty = document.createElement('div');
     empty.className = 'hint';
     empty.style.padding = '12px';
     empty.style.textAlign = 'center';
-    empty.textContent = 'Chưa có link Google Drive nào. Hãy thêm link bên dưới.';
+    empty.textContent = items.length
+      ? `Không tìm thấy thư mục khớp với “${driveFolderSearch.trim()}”.`
+      : 'Chưa có link Google Drive nào. Hãy thêm link bên dưới.';
     container.appendChild(empty);
     return;
   }
 
-  items.forEach((item, index) => {
+  pageItems.forEach((item) => {
     const card = document.createElement('div');
     card.className = 'drive-folder-item' + (item.is_active ? ' active' : '');
 
@@ -1390,6 +1456,20 @@ function renderDriveFolders(statsList, queueList) {
   });
 }
 
+$('drive-folder-search').addEventListener('input', event => {
+  driveFolderSearch = event.target.value || '';
+  driveFolderPage = 1;
+  renderDriveFolders(driveFoldersStats, driveUrlsQueue);
+});
+$('drive-page-prev').onclick = () => {
+  if (driveFolderPage > 1) driveFolderPage -= 1;
+  renderDriveFolders(driveFoldersStats, driveUrlsQueue);
+};
+$('drive-page-next').onclick = () => {
+  driveFolderPage += 1;
+  renderDriveFolders(driveFoldersStats, driveUrlsQueue);
+};
+
 function escapeHtml(str) {
   return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -1441,6 +1521,7 @@ async function runSingleFolder(folder, url, engine = 'chatgpt') {
     pl.folder = folder || '';
     pl.url = url || '';
     pl.engine = engine;
+    if (engine === 'chatgpt' && !(await prepareSwatchPrerequisites(pl))) return;
     await api('/api/run-folder', pl);
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
   } catch (e) {
@@ -1484,19 +1565,23 @@ $('add-drive-btn').onclick = async () => {
   }
 
   // Check if duplicate
-  const exists = driveUrlsQueue.some(i => i.url === url && i.folder === folder);
+  const folderId = driveFolderId(url);
+  const exists = driveUrlsQueue.some(i => driveFolderId(i.url) === folderId);
   if (exists) {
-    alert('Link Drive và thư mục này đã có trong danh sách.');
+    alert('Folder ID này đã có trong danh sách. Không thể thêm bản ghi trùng.');
     return;
   }
 
-  driveUrlsQueue.push({ url, folder });
+  driveUrlsQueue.push({ url, folder, modified_at: new Date().toISOString() });
+  driveFolderSearch = '';
+  driveFolderPage = 1;
+  $('drive-folder-search').value = '';
   urlInput.value = '';
   folderInput.value = '';
 
   try {
     await api('/api/save', payload());
-    fetchState();
+    await fetchState();
   } catch (e) {
     toastError(e);
   }
@@ -1895,7 +1980,7 @@ function payload() {
     auto_retry_max_attempts: Number($('retry-max').value || 10),
     dry_run: $('dry').checked,
     force: $('force').checked,
-    seamless_engine: ($('seamless-engine-chatgpt') && $('seamless-engine-chatgpt').checked) ? 'chatgpt' : 'algo',
+    seamless_engine: (!$('seamless-engine-chatgpt') || $('seamless-engine-chatgpt').checked) ? 'chatgpt' : 'algo',
     texture_prompt_mode: texPromptMode(),
     texture_prompt_file: $('tex-prompt-file').value.trim(),
     texture_prompt_text: $('tex-prompt-text').value,
@@ -1922,6 +2007,26 @@ function payload() {
       package: $('flow-package').checked
     }
   };
+}
+
+async function prepareSwatchPrerequisites(pl) {
+  if (!pl?.flows?.fabric || pl.flows.seamless) return true;
+  const check = await api('/api/check-swatch-prerequisites', pl);
+  if (!check.missing_count) return true;
+  const preview = (check.missing_skus || []).slice(0, 8).join(', ');
+  const more = check.missing_count > 8 ? ` và ${check.missing_count - 8} SKU khác` : '';
+  const reason = `Có ${check.missing_count} SKU chưa có seamless_texture.png${preview ? `: ${preview}${more}` : ''}.`;
+  const accepted = confirm(
+    reason + '\n\n' +
+    'Tự động tạo seamless cho các SKU còn thiếu, sau đó tạo swatch tương ứng?'
+  );
+  if (!accepted) return false;
+  pl.flows.crop = true;
+  pl.flows.seamless = true;
+  pl.flows.package = true;
+  pl.seamless_missing_only = true;
+  pl.seamless_engine = 'chatgpt';
+  return true;
 }
 
 function toastError(e) { alert(e.message || e); }
@@ -2043,11 +2148,16 @@ function renderSkuGrid(containerId, items, kind) {
     box.appendChild(empty);
     return;
   }
-  for (const sku of items) {
+  for (const rawItem of items) {
+    const item = typeof rawItem === 'string'
+      ? { sku: rawItem, folder: '', has_seamless: kind === 'created', has_fabric: kind === 'created' }
+      : rawItem;
+    const sku = item.sku;
+    const itemFolder = item.folder || (currentSelectedFolder !== 'all' ? currentSelectedFolder : '');
     const card = document.createElement('div');
     card.className = 'sku-card ' + kind;
     card.setAttribute('data-sku', sku);
-    card.onclick = () => openSkuModal(sku, currentSelectedFolder !== 'all' ? currentSelectedFolder : null);
+    card.onclick = () => openSkuModal(sku, itemFolder || null);
 
     const wrap = document.createElement('div');
     wrap.className = 'sku-thumb-wrap';
@@ -2056,9 +2166,9 @@ function renderSkuGrid(containerId, items, kind) {
     img.className = 'sku-thumb';
     img.loading = 'lazy';
     img.alt = sku;
-    const folderParam = (currentSelectedFolder && currentSelectedFolder !== 'all') ? ('&folder=' + encodeURIComponent(currentSelectedFolder)) : '';
-    if (kind === 'created') {
-      img.src = '/api/image?sku=' + encodeURIComponent(sku) + '&kind=output' + folderParam;
+    const folderParam = itemFolder ? ('&folder=' + encodeURIComponent(itemFolder)) : '';
+    if (item.has_seamless) {
+      img.src = '/api/image?sku=' + encodeURIComponent(sku) + '&kind=seamless' + folderParam;
       img.onerror = () => { img.src = '/api/image?sku=' + encodeURIComponent(sku) + '&kind=cropped' + folderParam; };
     } else {
       img.src = '/api/image?sku=' + encodeURIComponent(sku) + '&kind=cropped' + folderParam;
@@ -2076,7 +2186,19 @@ function renderSkuGrid(containerId, items, kind) {
     name.textContent = sku;
     name.title = sku;
 
+    const statuses = document.createElement('div');
+    statuses.className = 'sku-statuses';
+    const seamlessStatus = document.createElement('span');
+    seamlessStatus.className = 'sku-status-pill ' + (item.has_seamless ? 'ok' : 'missing');
+    seamlessStatus.textContent = (item.has_seamless ? '✓ ' : '− ') + 'Seamless';
+    const fabricStatus = document.createElement('span');
+    fabricStatus.className = 'sku-status-pill ' + (item.has_fabric ? 'ok' : 'missing');
+    fabricStatus.textContent = (item.has_fabric ? '✓ ' : '− ') + 'Swatch';
+    statuses.appendChild(seamlessStatus);
+    statuses.appendChild(fabricStatus);
+
     card.appendChild(wrap);
+    card.appendChild(statuses);
     card.appendChild(name);
     box.appendChild(card);
   }
@@ -2097,7 +2219,7 @@ function arraysEqual(a, b) {
   if (a === b) return true;
   if (!a || !b || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
+    if (JSON.stringify(a[i]) !== JSON.stringify(b[i])) return false;
   }
   return true;
 }
@@ -2159,13 +2281,13 @@ function renderFabricProgress(p, timing) {
   const etaSec = timing.eta_seconds || 0;
   if (running && (p.pending_count || 0) > 0 && avgSec > 0) {
     $('eta-time').textContent = '~' + formatSecToMin(etaSec);
-    $('eta-sub').textContent = 'Dự kiến xong ' + (p.pending_count || 0) + ' ảnh còn lại';
+    $('eta-sub').textContent = 'Còn ' + (p.pending_count || 0) + ' SKU thiếu Seamless hoặc Swatch';
   } else if ((p.pending_count || 0) === 0) {
     $('eta-time').textContent = 'Đã hoàn thành';
-    $('eta-sub').textContent = 'Tất cả SKU đã tạo xong';
+    $('eta-sub').textContent = 'Tất cả SKU có đủ Seamless và Swatch';
   } else {
-    $('eta-time').textContent = '~' + formatSecToMin((p.pending_count || 0) * (avgSec || 80));
-    $('eta-sub').textContent = 'Ước tính cho ' + (p.pending_count || 0) + ' SKU';
+    $('eta-time').textContent = 'Chưa hoàn thành';
+    $('eta-sub').textContent = (p.pending_count || 0) + ' SKU thiếu Seamless hoặc Swatch';
   }
 }
 
@@ -2183,7 +2305,7 @@ async function openSkuModal(sku, folder) {
   $('modal-cropped-empty').classList.add('hidden');
 
   $('modal-output-img').style.display = 'block';
-  $('modal-output-img').src = '/api/image?sku=' + encodeURIComponent(sku) + '&kind=output' + folderParam + '&t=' + Date.now();
+  $('modal-output-img').src = '/api/image?sku=' + encodeURIComponent(sku) + '&kind=final_seamless' + folderParam + '&t=' + Date.now();
   $('modal-output-empty').classList.add('hidden');
 
   $('modal-fabric-img').style.display = 'block';
@@ -2243,13 +2365,17 @@ async function openSkuModal(sku, folder) {
       $('modal-fabric-dim').className = 'badge pending';
     }
 
-    if (info.is_created) {
-      $('modal-status').innerHTML = '<span class="badge ok">Đã tạo seamless 2K</span>' + (info.fabric ? ' <span class="badge ok">Đã tạo swatch 4:3</span>' : '');
-    } else if (info.quota_info) {
-      $('modal-status').innerHTML = '<span class="badge" style="color:var(--amber); border-color:var(--amber); background:rgba(251,191,36,0.15)">⏳ Chờ quota: ' + escapeHtml(info.quota_info) + '</span>';
-      $('modal-output-path').textContent = (currentModalFolder ? ('output/chatgpt/' + currentModalFolder + '/') : 'output/chatgpt/') + sku + '/';
-    } else {
-      $('modal-status').innerHTML = '<span class="badge pending">Chưa hoàn tất</span>';
+    const seamlessBadge = info.output
+      ? '<span class="badge ok">Đã tạo seamless 2K</span>'
+      : '<span class="badge pending">Chưa tạo seamless 2K</span>';
+    const fabricBadge = info.fabric
+      ? '<span class="badge ok">Đã tạo swatch 4:3</span>'
+      : '<span class="badge pending">Chưa tạo swatch 4:3</span>';
+    $('modal-status').innerHTML = seamlessBadge + ' ' + fabricBadge;
+    if (info.quota_info) {
+      $('modal-status').innerHTML += ' <span class="badge" style="color:var(--amber); border-color:var(--amber); background:rgba(251,191,36,0.15)">⏳ Chờ quota: ' + escapeHtml(info.quota_info) + '</span>';
+    }
+    if (!info.output) {
       $('modal-output-path').textContent = (currentModalFolder ? ('output/chatgpt/' + currentModalFolder + '/') : 'output/chatgpt/') + sku + '/';
     }
 
@@ -2273,8 +2399,12 @@ $('modal-rerun-sku').onclick = async () => {
   const folder = currentModalFolder || '';
   if (!confirm(`Chạy tạo lại ảnh qua ChatGPT cho riêng SKU: ${sku}${folder ? ' trong thư mục ' + folder : ''}?`)) return;
   try {
+    const result = await api('/api/run-sku', { sku: sku, folder: folder, images_per_chat: 1, engine: 'chatgpt' });
+    if (result.started === false) {
+      alert(result.message || 'SKU đã có đủ Seamless và Swatch.');
+      return;
+    }
     closeSkuModal();
-    await api('/api/run-sku', { sku: sku, folder: folder, force: true, images_per_chat: 1, engine: 'chatgpt' });
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
   } catch (e) {
     toastError(e);
@@ -2321,7 +2451,7 @@ $('modal-open-folder').onclick = async () => {
 $('modal-view-full').onclick = () => {
   if (!currentModalSku) return;
   const folderParam = currentModalFolder ? ('&folder=' + encodeURIComponent(currentModalFolder)) : '';
-  window.open('/api/image?sku=' + encodeURIComponent(currentModalSku) + '&kind=output' + folderParam, '_blank');
+  window.open('/api/image?sku=' + encodeURIComponent(currentModalSku) + '&kind=final_seamless' + folderParam, '_blank');
 };
 
 $('modal-view-fabric').onclick = () => {
@@ -2416,10 +2546,15 @@ $('load-default-flow-prompt').onclick = async () => {
 };
 
 $('save').onclick = () => api('/api/save', payload()).then(() => alert('Đã lưu cấu hình thành công!')).catch(toastError);
-$('run').onclick = () => {
-  const pl = payload();
-  pl.engine = 'chatgpt';
-  api('/api/run', pl).catch(toastError);
+$('run').onclick = async () => {
+  try {
+    const pl = payload();
+    pl.engine = 'chatgpt';
+    if (!(await prepareSwatchPrerequisites(pl))) return;
+    await api('/api/run', pl);
+  } catch (error) {
+    toastError(error);
+  }
 };
 $('run-algo').onclick = () => {
   const pl = payload();
@@ -2831,13 +2966,20 @@ async function addAuditedFolderToPipeline(url, folder) {
   folder = (folder || '').trim();
   url = (url || '').trim();
   if (!url) return;
-  const exists = driveUrlsQueue.some(item => item.url === url);
+  const folderId = driveFolderId(url);
+  const exists = driveUrlsQueue.some(item => driveFolderId(item.url) === folderId);
   if (!exists) {
-    driveUrlsQueue.push({ url: url, folder: folder });
+    driveUrlsQueue.push({ url: url, folder: folder, modified_at: new Date().toISOString() });
+    driveFolderSearch = '';
+    driveFolderPage = 1;
+    $('drive-folder-search').value = '';
     renderDriveFolders(driveFoldersStats, driveUrlsQueue);
     try {
       await api('/api/save', payload());
-    } catch(e) {}
+      await fetchState();
+    } catch(e) {
+      toastError(e);
+    }
   }
   switchTab('dashboard');
   const target = $('drive-folders-list');
@@ -3674,7 +3816,7 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
         pass
 
     drive = config.get("google_drive", {})
-    configured_urls = drive.get("urls", [])
+    configured_urls = deduplicate_drive_items(drive.get("urls", []))
     if not configured_urls and drive.get("share_url"):
         configured_urls = [{"url": drive.get("share_url"), "folder": ""}]
 
@@ -3691,10 +3833,12 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
 
     # Collect known folder names from config
     folders_map = {}
+    folder_modified_at = {}
     for item in configured_urls:
         f_name = str(item.get("folder", "")).strip()
         if f_name:
             folders_map[f_name] = str(item.get("url", "")).strip()
+            folder_modified_at[f_name] = str(item.get("modified_at", "")).strip()
 
     # Also collect from sync_folders if not already mapped
     for f_name, f_info in sync_folders.items():
@@ -3711,22 +3855,22 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
 
     # Pre-map all created SKUs across output/chatgpt (supports both <base_sku>/<sku>/ and flat <sku>/)
     output_name = "seamless_texture.png"
-    done_sku_map = {}
+    done_sku_keys = set()
     sku_to_out_folder = {}
     if safe_is_dir(out_root):
         for f in out_root.iterdir():
             if f.is_dir():
-                if safe_is_file(f / output_name) or safe_is_file(f / "image_1.png"):
+                if safe_is_file(f / output_name) and safe_is_file(f / "image_1.png"):
                     sku_to_out_folder[f.name] = ""
-                    done_sku_map[f.name] = ""
+                    done_sku_keys.add(("", f.name))
                 for sub in f.iterdir():
                     if sub.is_dir():
                         sname = sub.name
                         sku_to_out_folder[sname] = f.name
                         has_seamless = safe_is_file(sub / output_name)
                         has_fabric = safe_is_file(sub / "image_1.png")
-                        if has_seamless or has_fabric:
-                            done_sku_map[sname] = f.name
+                        if has_seamless and has_fabric:
+                            done_sku_keys.add((f.name, sname))
 
     stats_list = []
     total_all_skus = 0
@@ -3796,7 +3940,7 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
 
         done_skus = set()
         for s in skus:
-            if s in done_sku_map:
+            if (folder_name, s) in done_sku_keys:
                 done_skus.add(s)
 
         total_skus = len(skus)
@@ -3810,6 +3954,26 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
         drive_total_images = sync_info.get("drive_total_images")
         last_sync_at = sync_info.get("last_sync_at")
         last_imported_count = sync_info.get("last_imported_count")
+
+        modified_candidates = []
+        configured_modified = folder_modified_at.get(folder_name, "")
+        if configured_modified:
+            try:
+                modified_candidates.append(datetime.datetime.fromisoformat(configured_modified.replace("Z", "+00:00")).timestamp())
+            except (TypeError, ValueError):
+                pass
+        if last_sync_at:
+            try:
+                modified_candidates.append(datetime.datetime.fromisoformat(str(last_sync_at)).timestamp())
+            except (TypeError, ValueError):
+                pass
+        for directory in (raw_dir, crop_dir, tex_dir, folder_out):
+            if safe_is_dir(directory):
+                try:
+                    modified_candidates.append(directory.stat().st_mtime)
+                except OSError:
+                    pass
+        modified_ts = max(modified_candidates, default=0.0)
 
         has_drive_url = bool(url)
         status_label = (
@@ -3828,6 +3992,8 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
             "drive_total": drive_total_images,
             "last_sync_at": last_sync_at,
             "last_imported_count": last_imported_count,
+            "modified_at": configured_modified,
+            "modified_ts": modified_ts,
             "raw_count": raw_count,
             "cropped_count": cropped_count,
             "seamless_count": seamless_count,
@@ -3921,6 +4087,18 @@ def get_image_file(project_dir, sku, kind, folder=None):
                     return candidate
         return None
 
+    elif kind == "final_seamless":
+        if folder:
+            target = out_base / folder / sku / output_name
+            return target if safe_is_file(target) else None
+        target = out_base / sku / output_name
+        if safe_is_file(target):
+            return target
+        if safe_is_dir(out_base):
+            matches = [candidate for candidate in out_base.glob(f"*/{sku}/{output_name}") if safe_is_file(candidate)]
+            return matches[0] if len(matches) == 1 else None
+        return None
+
     elif kind in {"seamless", "texture"}:
         if folder:
             target = tex_base / folder / f"texture_{sku}.png"
@@ -4002,14 +4180,38 @@ def get_sku_details(project_dir, sku, folder=None):
     if not re.match(r"^[A-Za-z0-9_.\-]+$", sku):
         raise ValueError("Mã SKU không hợp lệ.")
 
-    output_file = get_image_file(project_dir, sku, "output", folder=folder)
-    seamless_file = get_image_file(project_dir, sku, "seamless", folder=folder)
-    fabric_file = get_image_file(project_dir, sku, "fabric", folder=folder)
+    config = load_json(Path(project_dir) / "config.json")
+    output_name = str(config.get("seamless_package", {}).get("filename", "seamless_texture.png")).strip()
+    out_base = resolve_project_path(project_dir, "output/chatgpt")
+    detected_output_folder = str(folder or "").strip()
+    if detected_output_folder:
+        sku_output_dir = out_base / detected_output_folder / sku
+    else:
+        direct_dir = out_base / sku
+        candidates = (
+            sorted(path for path in out_base.glob(f"*/{sku}") if path.is_dir())
+            if safe_is_dir(out_base)
+            else []
+        )
+        if safe_is_dir(direct_dir):
+            sku_output_dir = direct_dir
+        elif len(candidates) == 1:
+            sku_output_dir = candidates[0]
+            detected_output_folder = candidates[0].parent.name
+        else:
+            sku_output_dir = direct_dir
+
+    # Modal status must be based only on the two canonical final files.
+    output_file = sku_output_dir / output_name
+    output_file = output_file if safe_is_file(output_file) else None
+    seamless_file = output_file
+    fabric_file = sku_output_dir / "image_1.png"
+    fabric_file = fabric_file if safe_is_file(fabric_file) else None
     cropped_file = get_image_file(project_dir, sku, "cropped", folder=folder)
     raw_file = get_image_file(project_dir, sku, "raw", folder=folder)
 
     # Detect folder if not explicitly provided
-    detected_folder = folder
+    detected_folder = folder or detected_output_folder
     if not detected_folder and output_file:
         try:
             parts = output_file.parts
@@ -4090,7 +4292,7 @@ def get_sku_details(project_dir, sku, folder=None):
             sec = int((end - start).total_seconds())
             fabric_duration_text = format_duration(sec)
 
-    is_created = bool(output_meta is not None)
+    is_created = bool(output_meta is not None and fabric_meta is not None)
     status_label = "done" if is_created else (status_entry.get("status") if status_entry else "pending")
     quota_info = None
     if not is_created:
@@ -4120,95 +4322,77 @@ def get_sku_details(project_dir, sku, folder=None):
 
 
 def fabric_progress(project_dir, config, folder_filter=None):
-    """Compare source SKUs with packaged outputs for the progress panel, with base_sku folder support."""
-    mode, local_dir, source_dir, crop_dir = source_settings(project_dir, config)
-    package = config.get("seamless_package", {})
-    chatgpt = config.get("chatgpt", {})
-    base_out_dir = resolve_project_path(
-        project_dir,
-        package.get("output_dir", chatgpt.get("output_dir", "output/chatgpt")),
-    )
-    output_name = str(package.get("filename", "seamless_texture.png")).strip()
-
+    """Return folder-aware SKU progress; complete means both seamless and swatch exist."""
+    mode, local_dir, _, _ = source_settings(project_dir, config)
+    output_name = str(config.get("seamless_package", {}).get("filename", "seamless_texture.png")).strip()
     raw_root = resolve_project_path(project_dir, "textures_raw")
     crop_root = resolve_project_path(project_dir, "textures_cropped")
     tex_root = resolve_project_path(project_dir, "textures")
-    out_root = base_out_dir
+    # Never reuse the mutable, folder-scoped output_dir written by apply_folder_config().
+    out_root = resolve_project_path(project_dir, "output/chatgpt")
+    is_all = not folder_filter or folder_filter in {"all", "Mặc định", ""}
+    selected_folder = "" if is_all else str(folder_filter).strip().replace("/", "\\")
+    sku_keys = set()
 
-    # Pre-map all created SKUs and their folder in output/chatgpt (supports both <base_sku>/<sku>/ and flat <sku>/)
-    done_sku_map = {}
-    sku_to_folder_map = {}
-    if safe_is_dir(out_root):
-        for f in out_root.iterdir():
-            if f.is_dir():
-                if safe_is_file(f / output_name) or safe_is_file(f / "image_1.png"):
-                    sku_to_folder_map[f.name] = ""
-                    done_sku_map[f.name] = ""
-                for sub in f.iterdir():
-                    if sub.is_dir():
-                        sname = sub.name
-                        sku_to_folder_map[sname] = f.name
-                        has_seamless = safe_is_file(sub / output_name)
-                        has_fabric = safe_is_file(sub / "image_1.png")
-                        if has_seamless or has_fabric:
-                            done_sku_map[sname] = f.name
+    def add_source_file(path, root, texture_prefix=False):
+        if not path.is_file() or path.suffix.lower() not in SUPPORTED_IMAGE_EXTENSIONS:
+            return
+        sku = path.stem
+        if texture_prefix and sku.startswith("texture_"):
+            sku = sku[8:]
+        try:
+            relative_parent = path.parent.relative_to(root)
+            folder = "" if str(relative_parent) == "." else relative_parent.parts[0]
+        except ValueError:
+            folder = ""
+        if not is_all and folder.casefold() != selected_folder.casefold():
+            return
+        sku_keys.add((folder, sku))
 
-    is_all = (not folder_filter or folder_filter in {"all", "Mặc định", ""})
-
-    skus = set()
     if mode == "local" and local_dir:
         if safe_is_dir(local_dir):
-            for item in local_dir.rglob("*"):
-                if item.is_file() and item.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
-                    skus.add(item.stem)
+            for path in local_dir.rglob("*"):
+                if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                    sku_keys.add(("", path.stem))
         raw_dir = local_dir
-        out_dir = base_out_dir
-    elif is_all:
-        for sname in sku_to_folder_map:
-            skus.add(sname)
-        for root in (raw_root, crop_root, tex_root):
-            if safe_is_dir(root):
-                for p in root.rglob("*"):
-                    if p.is_file() and p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
-                        stem = p.stem
-                        if stem.startswith("texture_"):
-                            stem = stem[8:]
-                        skus.add(stem)
-        raw_dir = raw_root
         out_dir = out_root
     else:
-        f_clean = folder_filter.strip().replace("/", "\\")
-        f_out = out_root / f_clean
-        if safe_is_dir(f_out):
-            for sub in f_out.iterdir():
-                if sub.is_dir():
-                    skus.add(sub.name)
-        for root in (raw_root, crop_root, tex_root):
-            sub_d = root / f_clean
-            if safe_is_dir(sub_d):
-                for p in sub_d.iterdir():
-                    if p.is_file() and p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
-                        stem = p.stem
-                        if stem.startswith("texture_"):
-                            stem = stem[8:]
-                        skus.add(stem)
-        for root in (raw_root, crop_root):
+        for root, texture_prefix in ((raw_root, False), (crop_root, False), (tex_root, True)):
             if safe_is_dir(root):
-                for p in root.iterdir():
-                    if p.is_file() and p.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
-                        stem = p.stem
-                        if sku_to_folder_map.get(stem) == f_clean or stem.upper().startswith(f_clean.upper()):
-                            skus.add(stem)
-        raw_dir = raw_root / f_clean if safe_is_dir(raw_root / f_clean) else raw_root
-        out_dir = out_root / f_clean
+                for path in root.rglob("*"):
+                    add_source_file(path, root, texture_prefix=texture_prefix)
+        raw_dir = raw_root if is_all else raw_root / selected_folder
+        out_dir = out_root if is_all else out_root / selected_folder
+
+    if safe_is_dir(out_root):
+        for first in out_root.iterdir():
+            if not first.is_dir():
+                continue
+            if safe_is_file(first / output_name) or safe_is_file(first / "image_1.png"):
+                if is_all:
+                    sku_keys.add(("", first.name))
+            for sku_dir in first.iterdir():
+                if not sku_dir.is_dir():
+                    continue
+                if is_all or first.name.casefold() == selected_folder.casefold():
+                    sku_keys.add((first.name, sku_dir.name))
 
     created = []
     pending = []
-    for sku in sorted(skus, key=str.casefold):
-        if sku in done_sku_map:
-            created.append(sku)
+    for folder, sku in sorted(sku_keys, key=lambda value: (value[0].casefold(), value[1].casefold())):
+        sku_dir = out_root / folder / sku if folder else out_root / sku
+        has_seamless = safe_is_file(sku_dir / output_name)
+        has_fabric = safe_is_file(sku_dir / "image_1.png")
+        item = {
+            "sku": sku,
+            "folder": folder,
+            "has_seamless": has_seamless,
+            "has_fabric": has_fabric,
+        }
+        if has_seamless and has_fabric:
+            created.append(item)
         else:
-            pending.append(sku)
+            pending.append(item)
 
     total = len(created) + len(pending)
     percent = round(len(created) * 100 / total) if total else 0
@@ -4536,6 +4720,27 @@ def validate_drive_url(value):
         and parsed.netloc.lower() == "drive.google.com"
         and "/folders/" in parsed.path
     )
+
+
+def drive_folder_id(value):
+    """Return the stable Drive folder ID, ignoring query-string variants."""
+    parsed = urlparse(str(value or "").strip())
+    match = re.search(r"/folders/([^/?#]+)", parsed.path, flags=re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def deduplicate_drive_items(items):
+    """Keep the first configured item for each Drive folder ID."""
+    unique = []
+    seen_ids = set()
+    for item in items if isinstance(items, list) else []:
+        url = str(item.get("url", "")).strip() if isinstance(item, dict) else ""
+        folder_id = drive_folder_id(url)
+        if not url or not folder_id or folder_id in seen_ids:
+            continue
+        seen_ids.add(folder_id)
+        unique.append(item)
+    return unique
 
 
 def find_chrome():
@@ -4920,7 +5125,7 @@ class PipelineController:
         try:
             config = load_json(self.config_path)
             drive_url = str(config.get("google_drive", {}).get("share_url", ""))
-            drive_urls = config.get("google_drive", {}).get("urls", [])
+            drive_urls = deduplicate_drive_items(config.get("google_drive", {}).get("urls", []))
             images_per_chat = int(
                 config.get("chatgpt_texture_grouped", {}).get("images_per_chat", 10)
             )
@@ -5070,6 +5275,13 @@ class PipelineController:
         drive_urls = payload.get("drive_urls", [])
         if not isinstance(drive_urls, list):
             drive_urls = []
+
+        existing_config = load_json(self.config_path)
+        existing_modified = {
+            drive_folder_id(item.get("url", "")): str(item.get("modified_at", "")).strip()
+            for item in existing_config.get("google_drive", {}).get("urls", [])
+            if isinstance(item, dict) and drive_folder_id(item.get("url", ""))
+        }
         
         valid_urls = []
         for item in drive_urls:
@@ -5078,7 +5290,19 @@ class PipelineController:
                 if not validate_drive_url(url):
                     raise ValueError("Tất cả link Drive phải có dạng https://drive.google.com/drive/folders/...")
                 folder_name = str(item.get("folder", "")).strip().replace("/", "\\")
-                valid_urls.append({"url": url, "folder": folder_name})
+                modified_at = str(item.get("modified_at", "")).strip()
+                if not modified_at:
+                    modified_at = existing_modified.get(drive_folder_id(url), "")
+                valid_item = {"url": url, "folder": folder_name}
+                if modified_at:
+                    valid_item["modified_at"] = modified_at
+                valid_urls.append(valid_item)
+        duplicate_count = len(valid_urls) - len(deduplicate_drive_items(valid_urls))
+        valid_urls = deduplicate_drive_items(valid_urls)
+        if duplicate_count:
+            self.append_log(
+                f"[Drive] Đã bỏ qua {duplicate_count} link trùng Folder ID; mỗi thư mục chỉ được lưu một lần.\n"
+            )
         
         drive_url = valid_urls[0]["url"] if valid_urls else ""
         local_value = str(payload.get("local_source_dir", "")).strip()
@@ -5135,6 +5359,10 @@ class PipelineController:
 
         fab_cfg = config.setdefault("chatgpt_fabric_grouped", {})
         fab_cfg["images_per_chat"] = images_per_chat
+        fab_cfg["input_mode"] = "seamless"
+        fab_cfg["raw_dir"] = str(
+            config.get("paths", {}).get("output_dir", config.get("chatgpt", {}).get("output_dir", "output/chatgpt"))
+        )
         fab_mode = str(payload.get("fabric_prompt_mode", "attachment")).strip().lower()
         if fab_mode in {"attachment", "manual"}:
             fab_cfg["prompt_mode"] = fab_mode
@@ -5310,6 +5538,8 @@ class PipelineController:
                 )
             if step.key == "seamless":
                 seamless_engine = str(payload.get("seamless_engine", "")).strip().lower()
+                if bool(payload.get("seamless_missing_only")):
+                    seamless_engine = "chatgpt"
                 if seamless_engine in {"algo", "algorithm", "cv"}:
                     algo_step = FlowStep("algo_seamless", "Tạo seamless Thuật toán", "run_algorithm_seamless_batch.py")
                     algo_args = list(common)
@@ -5340,7 +5570,11 @@ class PipelineController:
                     arguments.extend(("--prompt-text", fab_text))
             if step.key == "package" and folder and str(folder).strip():
                 arguments.extend(("--folder", str(folder).strip()))
-            if force and step.key in {"crop", "seamless", "fabric", "package"}:
+            if (
+                force
+                and step.key in {"crop", "seamless", "fabric", "package"}
+                and not (step.key == "seamless" and bool(payload.get("seamless_missing_only")))
+            ):
                 arguments.append("--force")
             steps.append((step, arguments))
         return steps
@@ -5376,7 +5610,8 @@ class PipelineController:
 
         # 4. ChatGPT fabric grouped
         config.setdefault("chatgpt_fabric_grouped", {})
-        config["chatgpt_fabric_grouped"]["raw_dir"] = crop_dir
+        config["chatgpt_fabric_grouped"]["raw_dir"] = out_dir
+        config["chatgpt_fabric_grouped"]["input_mode"] = "seamless"
         config["chatgpt_fabric_grouped"]["output_dir"] = out_dir
 
         # 5. Google Flow texture
@@ -5412,7 +5647,9 @@ class PipelineController:
         source_mode = str(payload.get("source_mode", "drive")).strip().lower()
         if source_mode == "drive":
             queue = payload.get("drive_urls", [])
-            valid_queue = [i for i in queue if str(i.get("url", "")).strip()]
+            valid_queue = deduplicate_drive_items(
+                [i for i in queue if isinstance(i, dict) and str(i.get("url", "")).strip()]
+            )
             if not valid_queue:
                 url = str(payload.get("drive_url", "")).strip()
                 folder = str(payload.get("folder", "")).strip()
@@ -5866,6 +6103,102 @@ class PipelineController:
         except Exception as exc:
             self.append_log(f"[Telegram Poller Error] {exc}\n")
 
+    def check_swatch_prerequisites(self, payload):
+        """Find local source SKUs that do not yet have a usable seamless texture."""
+        source_mode = str(payload.get("source_mode", "drive")).strip().lower()
+        selected_sku = str(payload.get("sku", "")).strip()
+        limit_text = str(payload.get("limit", "")).strip()
+        limit = int(limit_text) if limit_text.isdigit() and int(limit_text) > 0 else None
+        targets = []
+
+        requested_folder = str(payload.get("folder", "")).strip()
+        if source_mode == "drive":
+            if requested_folder:
+                requested_url = str(payload.get("url", "")).strip()
+                if not requested_url:
+                    requested_url = next(
+                        (
+                            str(item.get("url", "")).strip()
+                            for item in payload.get("drive_urls", [])
+                            if str(item.get("folder", "")).strip() == requested_folder
+                        ),
+                        "",
+                    )
+                targets = [(requested_folder, self.project_dir / "textures_raw" / requested_folder, requested_url)]
+            else:
+                targets = [
+                    (
+                        str(item.get("folder", "")).strip(),
+                        self.project_dir / "textures_raw" / str(item.get("folder", "")).strip(),
+                        str(item.get("url", "")).strip(),
+                    )
+                    for item in deduplicate_drive_items(payload.get("drive_urls", []))
+                    if str(item.get("url", "")).strip()
+                ]
+        else:
+            local_dir = resolve_project_path(self.project_dir, payload.get("local_source_dir", ""))
+            targets = [(requested_folder, local_dir, "")]
+
+        missing = []
+        checked = 0
+        config = load_json(self.config_path)
+        drive_settings = config.get("google_drive", {})
+        for folder, source_dir, drive_url in targets:
+            sku_names = []
+            if source_mode == "drive" and drive_url and bool(payload.get("flows", {}).get("import")):
+                import import_google_drive
+
+                entries = import_google_drive.list_public_folder(
+                    import_google_drive.validate_share_url(drive_url),
+                    int(drive_settings.get("timeout_seconds", 300)),
+                )
+                extensions = {
+                    str(value).lower() if str(value).startswith(".") else f".{str(value).lower()}"
+                    for value in drive_settings.get("extensions", import_google_drive.DEFAULT_EXTENSIONS)
+                }
+                images, _, _ = import_google_drive.select_images(
+                    entries,
+                    extensions,
+                    bool(drive_settings.get("recursive", False)),
+                )
+                sku_names = sorted({Path(item["name"]).stem for item in images}, key=str.casefold)
+            elif safe_is_dir(source_dir):
+                sku_names = sorted(
+                    {
+                        path.stem
+                        for path in source_dir.rglob("*")
+                        if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+                    },
+                    key=str.casefold,
+                )
+
+            folder_checked = 0
+            for sku in sku_names:
+                if selected_sku and sku.casefold() != selected_sku.casefold():
+                    continue
+                checked += 1
+                folder_checked += 1
+                output_dir = self.project_dir / "output" / "chatgpt"
+                final_path = output_dir / folder / sku / "seamless_texture.png" if folder else output_dir / sku / "seamless_texture.png"
+                valid = final_path.is_file() and final_path.stat().st_size > 0
+                if valid:
+                    try:
+                        from PIL import Image
+                        with Image.open(final_path) as image:
+                            image.verify()
+                    except Exception:
+                        valid = False
+                if not valid:
+                    missing.append(f"{folder}/{sku}" if folder else sku)
+                if limit is not None and folder_checked >= limit:
+                    break
+
+        return {
+            "checked_count": checked,
+            "missing_count": len(missing),
+            "missing_skus": missing,
+        }
+
     def run_single_folder(self, payload):
         folder = str(payload.get("folder", "")).strip()
         url = str(payload.get("url", "")).strip()
@@ -5890,6 +6223,7 @@ class PipelineController:
         
         run_payload = {
             "engine": engine,
+            "seamless_engine": str(payload.get("seamless_engine", "chatgpt")),
             "source_mode": "drive",
             "drive_urls": [{"url": url, "folder": folder}],
             "sku": payload.get("sku", ""),
@@ -5900,6 +6234,7 @@ class PipelineController:
             "auto_retry_max_attempts": int(payload.get("auto_retry_max_attempts", 10)),
             "dry_run": bool(payload.get("dry_run", False)),
             "force": bool(payload.get("force", False)),
+            "seamless_missing_only": bool(payload.get("seamless_missing_only", False)),
             "flows": flows,
         }
         engine_label = "Thuật toán CV" if engine in {"algo", "algorithm"} else "Google Flow" if engine in {"flow", "google_flow"} else "ChatGPT"
@@ -5918,6 +6253,43 @@ class PipelineController:
         config = load_json(self.config_path)
         mode, _, _, _ = source_settings(self.project_dir, config)
 
+        missing_labels = []
+        if engine == "chatgpt":
+            output_root = resolve_project_path(self.project_dir, "output/chatgpt")
+            sku_output = output_root / folder / sku if folder else output_root / sku
+            has_seamless = safe_is_file(sku_output / "seamless_texture.png")
+            has_fabric = safe_is_file(sku_output / "image_1.png")
+            if has_seamless and has_fabric:
+                self.append_log(
+                    f"\n[BỎ QUA] SKU {sku} đã có đủ Seamless và Swatch; không gửi prompt ChatGPT.\n"
+                )
+                return {
+                    "ok": True,
+                    "started": False,
+                    "message": f"SKU {sku} đã có đủ Seamless và Swatch. Không cần tạo lại.",
+                }
+            flows = {
+                "import": False,
+                "crop": not has_seamless,
+                "seamless": not has_seamless,
+                "fabric": not has_fabric,
+                "package": not has_seamless,
+            }
+            # Force is safe here because only missing output stages are enabled.
+            force = True
+            if not has_seamless:
+                missing_labels.append("Seamless")
+            if not has_fabric:
+                missing_labels.append("Swatch")
+        else:
+            flows = {
+                "import": False,
+                "crop": True,
+                "seamless": True,
+                "fabric": True,
+                "package": True,
+            }
+
         if folder:
             self.apply_folder_config(config.get("google_drive", {}).get("share_url", ""), folder)
 
@@ -5931,17 +6303,13 @@ class PipelineController:
             "images_per_chat": images_per_chat,
             "dry_run": False,
             "force": force,
-            "flows": {
-                "import": False,
-                "crop": True,
-                "seamless": True,
-                "fabric": True,
-                "package": True,
-            },
+            "flows": flows,
         }
         engine_label = "Thuật toán CV" if engine in {"algo", "algorithm"} else "Google Flow" if engine in {"flow", "google_flow"} else "ChatGPT"
-        self.append_log(f"\n[YÊU CẦU] Chạy riêng SKU ({engine_label}): {sku} (Folder: {folder or 'Mặc định'}, Force: {force})\n")
+        missing_text = f", Chỉ tạo: {', '.join(missing_labels)}" if missing_labels else ""
+        self.append_log(f"\n[YÊU CẦU] Chạy riêng SKU ({engine_label}): {sku} (Folder: {folder or 'Mặc định'}, Force: {force}{missing_text})\n")
         self.start_pipeline(run_payload)
+        return {"ok": True, "started": True, "missing": missing_labels}
 
     def delete_drive_folder(self, payload):
         folder = str(payload.get("folder", "")).strip().replace("/", "\\")
@@ -6040,6 +6408,7 @@ class PipelineController:
     def save_drive_link(self, payload):
         folder = str(payload.get("folder", "")).strip()
         url = str(payload.get("url", "")).strip()
+        modified_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         if not folder:
             raise ValueError("Tên thư mục không được để trống.")
         if url and not validate_drive_url(url):
@@ -6058,12 +6427,12 @@ class PipelineController:
             item_folder = str(item.get("folder", "")).strip()
             if item_folder.casefold() == folder.casefold():
                 if url:
-                    new_urls.append({"url": url, "folder": folder})
+                    new_urls.append({"url": url, "folder": folder, "modified_at": modified_at})
                 found = True
             else:
                 new_urls.append(item)
         if not found and url:
-            new_urls.append({"url": url, "folder": folder})
+            new_urls.append({"url": url, "folder": folder, "modified_at": modified_at})
         
         drive["urls"] = new_urls
         if new_urls:
@@ -6185,10 +6554,15 @@ class PipelineController:
                 for item in urls_list:
                     if str(item.get("folder", "")).strip().casefold() == folder_name.casefold():
                         item["url"] = m["url"]
+                        item["modified_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
                         found = True
                         break
                 if not found:
-                    urls_list.append({"url": m["url"], "folder": folder_name})
+                    urls_list.append({
+                        "url": m["url"],
+                        "folder": folder_name,
+                        "modified_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    })
             if urls_list:
                 drive["share_url"] = urls_list[0]["url"]
                 drive["enabled"] = True
@@ -6520,12 +6894,13 @@ class AppHandler(BaseHTTPRequestHandler):
             if path == "/api/run":
                 self.controller.start_pipeline(payload)
                 return self.send_json({"ok": True})
+            if path == "/api/check-swatch-prerequisites":
+                return self.send_json(self.controller.check_swatch_prerequisites(payload))
             if path == "/api/run-folder":
                 self.controller.run_single_folder(payload)
                 return self.send_json({"ok": True})
             if path == "/api/run-sku":
-                self.controller.run_single_sku(payload)
-                return self.send_json({"ok": True})
+                return self.send_json(self.controller.run_single_sku(payload))
             if path == "/api/open-folder":
                 res = self.controller.open_sku_folder(payload)
                 return self.send_json(res)
