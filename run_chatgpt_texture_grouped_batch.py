@@ -226,16 +226,14 @@ def discover_raw_files(parser, selected_sku=None):
 
 
 def is_texture_ready(sku, folder=None):
-    candidates = []
-    if folder and str(folder) != ".":
-        candidates.append(TEXTURES_DIR / folder / f"texture_{sku}.png")
-    candidates.append(TEXTURES_DIR / f"texture_{sku}.png")
-
+    # Only the packaged final file satisfies the Swatch prerequisite.  The
+    # intermediate textures/texture_<SKU>.png must not mark a SKU as ready.
     out_root = shared.resolve_path(
         shared.config.get("seamless_package", {}).get(
             "output_dir", shared.config.get("chatgpt", {}).get("output_dir", "output/chatgpt")
         )
     )
+    candidates = []
     if folder and str(folder) != ".":
         candidates.append(out_root / folder / sku / "seamless_texture.png")
     candidates.append(out_root / sku / "seamless_texture.png")
@@ -248,14 +246,6 @@ def is_texture_ready(sku, folder=None):
             except Exception:
                 pass
 
-    if out_root.is_dir():
-        for match in out_root.glob(f"*/{sku}/seamless_texture.png"):
-            if match.is_file():
-                try:
-                    legacy.inspect_output(match)
-                    return True
-                except Exception:
-                    pass
     return False
 
 

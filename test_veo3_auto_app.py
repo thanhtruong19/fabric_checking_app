@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import time
 import threading
@@ -40,7 +41,30 @@ class VEO3AutoAppTests(unittest.TestCase):
             ):
                 discovered = fabric.discover_input_files(parser)
 
-            self.assertEqual(discovered, [("ABC1", sku_dir / "seamless_texture.png", None)])
+            self.assertEqual(discovered, [("ABC1", (sku_dir / "seamless_texture.png", None))])
+
+    def test_fabric_worker_preserves_collection_folder_for_nested_seamless(self):
+        import run_chatgpt_fabric_grouped_batch as fabric
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sku_dir = root / "DEHQ" / "DEHQ2"
+            sku_dir.mkdir(parents=True)
+            seamless = sku_dir / "seamless_texture.png"
+            seamless.touch()
+            parser = Mock()
+            with (
+                patch.object(fabric, "RAW_DIR", root),
+                patch.object(fabric, "FALLBACK_RAW_DIR", root),
+                patch.object(fabric, "INPUT_MODE", "seamless"),
+            ):
+                discovered = fabric.discover_input_files(parser)
+
+            self.assertEqual(discovered, [("DEHQ2", (seamless, "DEHQ"))])
+            with patch.object(fabric, "OUTPUT_DIR", root):
+                self.assertEqual(
+                    fabric.output_path_for("DEHQ2", "DEHQ"),
+                    root / "DEHQ" / "DEHQ2" / "image_1.png",
+                )
 
     def test_chatgpt_workers_reuse_one_tab_without_closing_other_tabs(self):
         import run_chatgpt_texture_batch as texture
@@ -587,6 +611,33 @@ class VEO3AutoAppTests(unittest.TestCase):
             self.assertEqual(result["checked_count"], 2)
             self.assertEqual(result["missing_skus"], ["NEW/NEW1", "NEW/NEW2"])
 
+    def test_swatch_prerequisites_fall_back_to_unlinked_local_folders(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            raw = root / "textures_raw" / "DEHQ"
+            raw.mkdir(parents=True)
+            (raw / "DEHQ1.jpg").touch()
+            (raw / "DEHQ2.jpg").touch()
+            ready = root / "output" / "chatgpt" / "DEHQ" / "DEHQ2"
+            ready.mkdir(parents=True)
+            Image.new("RGB", (8, 8), "black").save(ready / "seamless_texture.png")
+            (root / "config.json").write_text(
+                json.dumps({"google_drive": {"urls": []}}), encoding="utf-8"
+            )
+            controller = app.PipelineController.__new__(app.PipelineController)
+            controller.project_dir = root
+
+            result = controller.check_swatch_prerequisites({
+                "source_mode": "drive",
+                "drive_urls": [],
+                "flows": {"import": True},
+            })
+
+            self.assertTrue(result["local_fallback"])
+            self.assertEqual(result["checked_count"], 2)
+            self.assertEqual(result["missing_skus"], ["DEHQ/DEHQ1"])
+
     def test_single_sku_chatgpt_runs_only_missing_output_stages(self):
         cases = (
             (False, False, {"crop": True, "seamless": True, "fabric": True, "package": True}),
@@ -662,6 +713,29 @@ class VEO3AutoAppTests(unittest.TestCase):
         controller.validate_run.assert_called_once()
         controller.save_settings.assert_not_called()
         worker.start.assert_called_once()
+
+    def test_stop_escalates_from_break_to_terminate_and_kill(self):
+        controller = app.PipelineController.__new__(app.PipelineController)
+        controller.lock = threading.RLock()
+        controller.append_log = Mock()
+        controller.stop_escalation_thread = None
+        process = Mock()
+        process.poll.return_value = None
+        process.wait.side_effect = [
+            subprocess.TimeoutExpired("worker", 3),
+            subprocess.TimeoutExpired("worker", 2),
+            0,
+        ]
+
+        controller._stop_process_with_escalation(process)
+
+        process.send_signal.assert_called_once_with(app.signal.CTRL_BREAK_EVENT)
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
+        self.assertEqual(
+            [call.kwargs["timeout"] for call in process.wait.call_args_list],
+            [3, 2, 2],
+        )
 
     def test_compute_drive_folders_stats_and_filter(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -866,7 +940,6 @@ class VEO3AutoAppTests(unittest.TestCase):
                 },
             }
             (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
-
             # 1. Test discover_textures auto-detects folder and copies to textures/COLLECTION_A/
             items = sp.discover_textures(tex_dir)
             self.assertEqual(len(items), 1)
@@ -1256,6 +1329,19 @@ class VEO3AutoAppTests(unittest.TestCase):
                 }
             }
             (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
+            (root / "status_drive_sync.json").write_text(
+                json.dumps({
+                    "folders": {
+                        "ABC": {"folder": "ABC", "drive_total_images": 1},
+                        "XYZ": {"folder": "XYZ", "drive_total_images": 2},
+                    },
+                    "history": [
+                        {"folder": "ABC", "status": "success"},
+                        {"folder": "XYZ", "status": "success"},
+                    ],
+                }),
+                encoding="utf-8",
+            )
 
             # Create mock disk directories for folder ABC
             raw_abc = root / "textures_raw" / "ABC"
@@ -1273,6 +1359,12 @@ class VEO3AutoAppTests(unittest.TestCase):
             saved_urls = saved["google_drive"]["urls"]
             self.assertEqual(len(saved_urls), 1)
             self.assertEqual(saved_urls[0]["folder"], "XYZ")
+
+            # Verify stale sync state cannot recreate the deleted folder card.
+            sync_data = json.loads((root / "status_drive_sync.json").read_text(encoding="utf-8"))
+            self.assertNotIn("ABC", sync_data["folders"])
+            self.assertIn("XYZ", sync_data["folders"])
+            self.assertEqual([item["folder"] for item in sync_data["history"]], ["XYZ"])
 
             # Verify disk directory removed
             self.assertFalse(raw_abc.exists())

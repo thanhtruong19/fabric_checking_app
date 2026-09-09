@@ -280,7 +280,16 @@ def discover_input_files(parser, selected_sku=None):
         if selected_sku and sku != selected_sku:
             continue
         if INPUT_MODE == "seamless":
-            folder = None
+            # Keep the collection folder when the input root is global:
+            # output/chatgpt/<folder>/<sku>/seamless_texture.png.  Dropping it
+            # made outputs land at output/chatgpt/<sku>/image_1.png and caused
+            # completed nested SKUs to be generated again.
+            try:
+                relative_sku_dir = path.parent.relative_to(active_dir)
+                folder_parts = relative_sku_dir.parts[:-1]
+                folder = str(Path(*folder_parts)) if folder_parts else None
+            except Exception:
+                folder = None
         else:
             try:
                 rel = path.parent.relative_to(active_dir)

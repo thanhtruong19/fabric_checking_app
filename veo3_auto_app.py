@@ -160,7 +160,7 @@ INDEX_HTML = r"""<!doctype html>
     .drive-manager-box {
       border: 1px solid var(--line); border-radius: 11px; background: #081321;
       padding: 10px; margin-top: 6px; display: grid;
-      grid-template-rows: repeat(5, 148px); gap: 8px;
+      grid-template-rows: repeat(4, 148px); gap: 8px;
     }
     .drive-folder-placeholder { visibility: hidden; pointer-events: none; }
     .drive-list-toolbar { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
@@ -1361,7 +1361,7 @@ let driveFoldersStats = [];
 let currentSelectedFolder = 'all';
 let driveFolderSearch = '';
 let driveFolderPage = 1;
-const DRIVE_FOLDERS_PER_PAGE = 5;
+const DRIVE_FOLDERS_PER_PAGE = 4;
 
 function fillDriveFolderSlots(container, usedSlots) {
   for (let index = usedSlots; index < DRIVE_FOLDERS_PER_PAGE; index += 1) {
@@ -2124,6 +2124,7 @@ function payload() {
 async function prepareSwatchPrerequisites(pl) {
   if (!pl?.flows?.fabric || pl.flows.seamless) return true;
   const check = await api('/api/check-swatch-prerequisites', pl);
+  if (check.local_fallback) pl.flows.import = false;
   if (!check.missing_count) return true;
   const preview = (check.missing_skus || []).slice(0, 8).join(', ');
   const more = check.missing_count > 8 ? ` và ${check.missing_count - 8} SKU khác` : '';
@@ -4992,6 +4993,7 @@ class PipelineController:
         self.quota_alert = None
         self.worker = None
         self.process = None
+        self.stop_escalation_thread = None
         self.stop_requested = threading.Event()
         self.server = None
         self.last_client_at = time.monotonic()
@@ -6222,6 +6224,7 @@ class PipelineController:
         limit_text = str(payload.get("limit", "")).strip()
         limit = int(limit_text) if limit_text.isdigit() and int(limit_text) > 0 else None
         targets = []
+        local_fallback = False
 
         requested_folder = str(payload.get("folder", "")).strip()
         if source_mode == "drive":
@@ -6247,6 +6250,15 @@ class PipelineController:
                     for item in deduplicate_drive_items(payload.get("drive_urls", []))
                     if str(item.get("url", "")).strip()
                 ]
+                if not targets:
+                    raw_root = self.project_dir / "textures_raw"
+                    if safe_is_dir(raw_root):
+                        targets = [
+                            (path.name, path, "")
+                            for path in sorted(raw_root.iterdir(), key=lambda item: item.name.casefold())
+                            if path.is_dir()
+                        ]
+                        local_fallback = bool(targets)
         else:
             local_dir = resolve_project_path(self.project_dir, payload.get("local_source_dir", ""))
             targets = [(requested_folder, local_dir, "")]
@@ -6309,6 +6321,7 @@ class PipelineController:
             "checked_count": checked,
             "missing_count": len(missing),
             "missing_skus": missing,
+            "local_fallback": local_fallback,
         }
 
     def run_single_folder(self, payload):
@@ -6447,17 +6460,54 @@ class PipelineController:
         drive["enabled"] = bool(new_urls)
         save_json_atomic(self.config_path, config)
 
+        # Folder cards are assembled from both config.json and the persisted
+        # Drive sync snapshot.  Remove the latter as well, otherwise fetchState()
+        # immediately recreates a deleted card as "Chưa tải ảnh".
+        if folder:
+            sync_path = resolve_project_path(
+                self.project_dir, drive.get("sync_status_file", "status_drive_sync.json")
+            )
+            if safe_is_file(sync_path):
+                sync_data = load_json(sync_path)
+                if isinstance(sync_data, dict):
+                    folder_key = folder.casefold()
+                    sync_folders = sync_data.get("folders")
+                    if isinstance(sync_folders, dict):
+                        sync_data["folders"] = {
+                            key: value
+                            for key, value in sync_folders.items()
+                            if str(key).strip().replace("/", "\\").casefold() != folder_key
+                        }
+                    sync_history = sync_data.get("history")
+                    if isinstance(sync_history, list):
+                        sync_data["history"] = [
+                            item
+                            for item in sync_history
+                            if not isinstance(item, dict)
+                            or str(item.get("folder", "")).strip().replace("/", "\\").casefold()
+                            != folder_key
+                        ]
+                    save_json_atomic(sync_path, sync_data)
+
+        delete_errors = []
         if delete_files and folder and folder not in {".", "..", "/", "\\"}:
             for base_name in ("textures_raw", "textures_cropped", "textures", "output/chatgpt", "output/chatgpt_project_fabric"):
                 target_dir = resolve_project_path(self.project_dir, base_name) / folder
                 if safe_is_dir(target_dir):
                     try:
-                        shutil.rmtree(target_dir, ignore_errors=True)
+                        shutil.rmtree(target_dir)
                     except Exception as exc:
+                        delete_errors.append(f"{target_dir}: {exc}")
                         self.append_log(f"[WARNING] Không xóa được thư mục {target_dir}: {exc}\n")
 
+        if delete_errors:
+            raise RuntimeError(
+                "Đã xóa link và trạng thái Drive nhưng không thể xóa hết dữ liệu local:\n"
+                + "\n".join(delete_errors)
+            )
+
         self.append_log(f"Đã xóa thư mục/link Drive [{folder or url}].\n")
-        return {"ok": True}
+        return {"ok": True, "drive_urls": new_urls}
 
     def dismiss_quota_alert(self):
         with self.lock:
@@ -6801,18 +6851,75 @@ class PipelineController:
         self.set_status(result)
         self.append_log(f"\n{result}\n")
 
+    def _stop_process_with_escalation(self, process):
+        """Give the active worker a short graceful exit, then force it to stop."""
+        try:
+            try:
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+                self.append_log(
+                    "\n[STOP] Đã gửi yêu cầu dừng an toàn; chờ tối đa 3 giây...\n"
+                )
+                process.wait(timeout=3)
+                self.append_log("[STOP] Worker đã dừng an toàn.\n")
+                return
+            except subprocess.TimeoutExpired:
+                pass
+            except Exception as exc:
+                self.append_log(
+                    f"[STOP] Không gửi được yêu cầu dừng an toàn ({exc}); "
+                    "chuyển sang terminate.\n"
+                )
+
+            if process.poll() is None:
+                self.append_log(
+                    "[STOP] Worker chưa phản hồi sau 3 giây; đang cưỡng chế terminate...\n"
+                )
+                try:
+                    process.terminate()
+                except Exception as exc:
+                    self.append_log(f"[STOP] terminate không thành công: {exc}\n")
+
+            try:
+                process.wait(timeout=2)
+                self.append_log("[STOP] Worker đã được terminate.\n")
+                return
+            except subprocess.TimeoutExpired:
+                pass
+            except Exception:
+                if process.poll() is not None:
+                    return
+
+            if process.poll() is None:
+                self.append_log(
+                    "[STOP] Worker vẫn còn chạy; đang kill tiến trình worker hiện tại...\n"
+                )
+                try:
+                    process.kill()
+                    process.wait(timeout=2)
+                    self.append_log("[STOP] Đã cưỡng chế dừng worker.\n")
+                except Exception as exc:
+                    self.append_log(f"[STOP] Không thể kill worker: {exc}\n")
+        finally:
+            with self.lock:
+                if self.stop_escalation_thread is threading.current_thread():
+                    self.stop_escalation_thread = None
+
     def stop(self):
         self.stop_requested.set()
         self.set_status("Đang dừng...")
-        process = self.process
-        if process and process.poll() is None:
-            try:
-                process.send_signal(signal.CTRL_BREAK_EVENT)
-            except Exception:
-                try:
-                    process.terminate()
-                except Exception:
-                    pass
+        with self.lock:
+            process = self.process
+            if not process or process.poll() is not None:
+                return
+            if self.stop_escalation_thread and self.stop_escalation_thread.is_alive():
+                return
+            self.stop_escalation_thread = threading.Thread(
+                target=self._stop_process_with_escalation,
+                args=(process,),
+                daemon=True,
+                name="veo3-stop-escalation",
+            )
+            self.stop_escalation_thread.start()
 
     def start_automation_chrome(self):
         config = load_json(self.config_path)
