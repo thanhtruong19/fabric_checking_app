@@ -356,7 +356,22 @@ INDEX_HTML = r"""<!doctype html>
     }
     .preview-card-title {
       font-size: 12px; font-weight: 600; color: var(--muted); display: flex;
-      justify-content: space-between; align-items: center;
+      justify-content: space-between; align-items: flex-start; gap: 8px; min-height: 48px;
+    }
+    .preview-card-title > span:first-child { flex: 1 1 auto; min-width: 0; line-height: 1.35; }
+    .preview-card-title > .badge {
+      flex: 0 0 auto; min-width: max-content; white-space: nowrap;
+      padding: 6px 10px; font-size: 12px; line-height: 1.2;
+    }
+    .preview-card-title.preview-result-title { align-items: center; }
+    .preview-card-title > .preview-result-status {
+      flex: 1 1 auto; width: 100%; min-width: 0; padding: 7px 9px; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; text-align: center;
+      font-size: clamp(10px, .78vw, 12px); line-height: 1.2;
+    }
+    .modal-notice {
+      padding: 9px 12px; border: 1px solid #854d0e; border-radius: 9px;
+      color: var(--amber); background: rgba(251,191,36,.1); font-size: 12px;
     }
     .preview-img-box {
       width: 100%; aspect-ratio: 1 / 1; border-radius: 8px; overflow: hidden;
@@ -406,21 +421,31 @@ INDEX_HTML = r"""<!doctype html>
     .tab-nav-btn.active .tab-nav-badge { background: rgba(255,255,255,.2); color: #fff; }
     .floating-log-nav {
       position: fixed; top: 50%; right: 18px; z-index: 900;
-      transform: translateY(-50%); min-width: 58px; max-width: 190px;
-      padding: 12px 14px; border-color: rgba(56,189,248,.45);
+      transform: translateY(-50%); width: 48px; min-width: 48px; max-width: 190px;
+      padding: 11px; overflow: hidden; justify-content: center;
+      border-color: rgba(56,189,248,.3); opacity: .42;
       background: rgba(11,23,40,.96); color: #cbd5e1;
       box-shadow: 0 12px 30px rgba(0,0,0,.35), 0 0 0 1px rgba(56,189,248,.08);
       backdrop-filter: blur(10px);
+      transition: width .2s ease, opacity .2s ease, color .2s ease, border-color .2s ease, background .2s ease, transform .15s ease;
     }
-    .floating-log-nav:hover:not(:disabled) {
+    .floating-log-nav:hover:not(:disabled), .floating-log-nav:focus-visible {
+      width: 190px; justify-content: flex-start; opacity: 1;
       transform: translateY(-50%) translateX(-3px);
       color: #fff; border-color: var(--cyan); background: #13243c;
     }
     .floating-log-nav.active {
-      color: #fff; border-color: #60a5fa; background: var(--blue);
+      opacity: .72; color: #fff; border-color: #60a5fa; background: var(--blue);
       box-shadow: 0 12px 32px rgba(37,99,235,.35);
     }
-    .floating-log-nav .floating-log-label { line-height: 1.25; text-align: left; }
+    .floating-log-nav.active:hover, .floating-log-nav.active:focus-visible { opacity: 1; }
+    .floating-log-nav .floating-log-label {
+      max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
+      line-height: 1.25; text-align: left;
+      transition: max-width .2s ease, opacity .15s ease;
+    }
+    .floating-log-nav:hover .floating-log-label,
+    .floating-log-nav:focus-visible .floating-log-label { max-width: 145px; opacity: 1; }
     .log-popup {
       position: fixed; top: 50%; left: 50%; z-index: 950;
       transform: translate(-50%, -50%); width: min(66vw, 1400px);
@@ -545,16 +570,20 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     /* Drive Comparison Table & Management Styles */
+    .audit-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+    .audit-metrics .metric { min-height: 112px; display: flex; flex-direction: column; justify-content: flex-start; }
     .drive-table-wrap { width: 100%; overflow-x: auto; margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; background: #0b1728; }
-    .drive-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+    .drive-table { width: 100%; min-width: 1710px; table-layout: fixed; border-collapse: collapse; font-size: 13px; text-align: left; }
     .drive-table th { background: #101c2e; padding: 12px 14px; color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-    .drive-table td { padding: 12px 14px; border-bottom: 1px solid rgba(38,54,77,.4); vertical-align: middle; }
+    .drive-table td { height: 112px; padding: 12px 14px; border-bottom: 1px solid rgba(38,54,77,.4); vertical-align: middle; overflow: hidden; }
     .drive-table tr:last-child td { border-bottom: none; }
     .drive-table tr:hover td { background: rgba(56,189,248,.04); }
-    .drive-table-toolbar { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 14px; }
-    .dt-toolbar-left { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; flex: 1; }
-    .dt-toolbar-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .drive-link-box { display: inline-flex; align-items: center; gap: 6px; max-width: 250px; }
+    .drive-table-toolbar { display: grid; grid-template-columns: minmax(420px, 1fr) auto; gap: 12px; align-items: center; margin-top: 14px; }
+    .dt-toolbar-left { display: grid; grid-template-columns: minmax(220px, 1fr) 240px; gap: 10px; align-items: center; min-width: 0; }
+    .dt-toolbar-right { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap; }
+    .dt-toolbar-left input, .dt-toolbar-left select, .dt-toolbar-right button { height: 40px; }
+    .dt-toolbar-left input, .dt-toolbar-left select { width: 100%; min-width: 0; }
+    .drive-link-box { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; }
     .drive-link-box a { color: var(--cyan); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
     .drive-link-box a:hover { text-decoration: underline; }
     .dt-progress-bar { width: 85px; height: 7px; background: #050b14; border-radius: 99px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
@@ -562,6 +591,13 @@ INDEX_HTML = r"""<!doctype html>
     .metric-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
     .badge-unlinked { border: 1px dashed var(--line); color: var(--muted); background: transparent; padding: 2px 7px; border-radius: 99px; font-size: 11px; }
     .btn-icon { padding: 4px 7px; font-size: 12px; line-height: 1; }
+    .dt-folder-stack { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 7px; }
+    .dt-folder-head { display: flex; align-items: center; min-width: 0; }
+    .dt-folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text); cursor: pointer; }
+    .dt-status-badge { width: 112px; min-height: 30px; padding: 4px 8px; display: inline-flex; align-items: center; justify-content: center; text-align: center; line-height: 1.15; border-radius: 99px; font-size: 11px; box-sizing: border-box; }
+    .dt-actions { display: grid; grid-template-columns: 78px 126px 86px 46px 46px; gap: 6px; justify-content: end; align-items: center; }
+    .dt-actions button { width: 100%; height: 36px; padding: 6px 8px; white-space: nowrap; }
+    .dt-action-placeholder { visibility: hidden; pointer-events: none; }
 
     @media(max-width: 900px) {
       .grid { grid-template-columns: 1fr; }
@@ -569,6 +605,9 @@ INDEX_HTML = r"""<!doctype html>
       .fields { grid-template-columns: 1fr; }
       .checks { grid-template-columns: 1fr; }
       .progress-summary { grid-template-columns: 1fr 1fr; }
+      .audit-metrics { grid-template-columns: 1fr 1fr; }
+      .drive-table-toolbar { grid-template-columns: 1fr; }
+      .dt-toolbar-right { justify-content: flex-start; flex-wrap: wrap; }
       .timing-summary { grid-template-columns: 1fr 1fr; }
       .sku-columns { grid-template-columns: 1fr; }
       .modal-previews { grid-template-columns: 1fr; }
@@ -618,7 +657,9 @@ INDEX_HTML = r"""<!doctype html>
     #tab-quality .quality-errors.has-errors { color: var(--red); border-color: #9f1239; }
     @media(max-width: 480px) {
       #tab-quality .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-      .floating-log-nav { right: 8px; min-width: 46px; padding: 11px; }
+      .floating-log-nav,
+      .floating-log-nav:hover:not(:disabled),
+      .floating-log-nav:focus-visible { right: 8px; width: 46px; min-width: 46px; padding: 11px; justify-content: center; }
       .floating-log-nav .floating-log-label { display: none; }
       .log-popup { width: calc(100vw - 16px); height: 78vh; }
     }
@@ -995,7 +1036,7 @@ INDEX_HTML = r"""<!doctype html>
       </div>
 
       <!-- Top Metric Cards -->
-      <div class="progress-summary" style="margin-top: 14px;">
+      <div class="audit-metrics">
         <div class="metric">
           <strong id="dt-total-folders">0</strong>
           <span>Thư mục vải</span>
@@ -1026,8 +1067,8 @@ INDEX_HTML = r"""<!doctype html>
       <!-- Action Toolbar -->
       <div class="drive-table-toolbar">
         <div class="dt-toolbar-left">
-          <input id="dt-search" type="text" class="sku-search" style="max-width:220px;" placeholder="🔍 Tìm kiếm mã thư mục vải..." oninput="filterDriveTable()">
-          <select id="dt-status-filter" style="padding:6px 10px; font-size:12px; border-radius:8px; border:1px solid var(--line); background:#081321; color:var(--text);" onchange="filterDriveTable()">
+          <input id="dt-search" type="text" class="sku-search" placeholder="🔍 Tìm kiếm mã thư mục vải..." oninput="filterDriveTable()">
+          <select id="dt-status-filter" onchange="filterDriveTable()">
             <option value="all">📁 Tất cả trạng thái</option>
             <option value="completed">✔ Đã hoàn thành (100%)</option>
             <option value="in_progress">⚡ Đang làm dở</option>
@@ -1046,9 +1087,14 @@ INDEX_HTML = r"""<!doctype html>
       <!-- Main Comparison Table -->
       <div class="drive-table-wrap">
         <table class="drive-table">
+          <colgroup>
+            <col style="width:155px"><col style="width:145px"><col style="width:300px"><col style="width:140px"><col style="width:145px">
+            <col style="width:175px"><col style="width:165px"><col style="width:140px"><col style="width:425px">
+          </colgroup>
           <thead>
             <tr>
               <th>📁 Thư mục vải</th>
+              <th>● Trạng thái</th>
               <th>🔗 Link Google Drive</th>
               <th>📥 Drive (Ảnh)</th>
               <th>✂️ Đã crop / Raw</th>
@@ -1059,7 +1105,7 @@ INDEX_HTML = r"""<!doctype html>
             </tr>
           </thead>
           <tbody id="drive-table-body">
-            <tr><td colspan="8" style="text-align:center; padding:24px;" class="hint">Đang tải danh sách thư mục vải và dữ liệu Drive...</td></tr>
+            <tr><td colspan="9" style="text-align:center; padding:24px;" class="hint">Đang tải danh sách thư mục vải và dữ liệu Drive...</td></tr>
           </tbody>
         </table>
       </div>
@@ -1147,9 +1193,8 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <!-- Preview 2: Seamless Texture 2K -->
         <div class="preview-card">
-          <div class="preview-card-title">
-            <span>2. Seamless 2K (01_MASTER)</span>
-            <span id="modal-output-dim" class="badge ok">--</span>
+          <div class="preview-card-title preview-result-title">
+            <span id="modal-output-dim" class="preview-result-status badge">Đang kiểm tra Seamless 2K...</span>
           </div>
           <div class="preview-img-box">
             <img id="modal-output-img" src="" alt="Seamless Output" onerror="this.style.display='none'; document.getElementById('modal-output-empty').classList.remove('hidden')">
@@ -1162,9 +1207,8 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <!-- Preview 3: Fabric Swatch Studio 4:3 -->
         <div class="preview-card">
-          <div class="preview-card-title">
-            <span>3. Swatch Vải (02_MASTER)</span>
-            <span id="modal-fabric-dim" class="badge ok">--</span>
+          <div class="preview-card-title preview-result-title">
+            <span id="modal-fabric-dim" class="preview-result-status badge">Đang kiểm tra Swatch 4:3...</span>
           </div>
           <div class="preview-img-box">
             <img id="modal-fabric-img" src="" alt="Fabric Swatch" onerror="this.style.display='none'; document.getElementById('modal-fabric-empty').classList.remove('hidden')">
@@ -1176,10 +1220,10 @@ INDEX_HTML = r"""<!doctype html>
           </div>
         </div>
       </div>
+      <div id="modal-notice" class="modal-notice hidden"></div>
       
       <div class="modal-info-table">
         <div class="label">Thư mục Drive:</div><div id="modal-folder" class="val" style="font-weight:600; color:var(--cyan);">-</div>
-        <div class="label">Trạng thái:</div><div id="modal-status" class="val">-</div>
         <div class="label">Lần tạo gần nhất:</div><div id="modal-completed-at" class="val">-</div>
         <div class="label">Thời lượng tạo:</div><div id="modal-duration" class="val">-</div>
         <div class="label">Thư mục output:</div><div id="modal-output-path" class="val" style="font-family: Consolas, monospace; font-size: 11px;">-</div>
@@ -2382,13 +2426,16 @@ async function openSkuModal(sku, folder) {
 
   $('modal-cropped-dim').textContent = '--';
   $('modal-cropped-size').textContent = '--';
-  $('modal-output-dim').textContent = '--';
+  $('modal-output-dim').textContent = 'Đang kiểm tra Seamless 2K...';
+  $('modal-output-dim').className = 'preview-result-status badge';
   $('modal-output-size').textContent = '--';
   $('modal-output-time').textContent = '--';
-  $('modal-fabric-dim').textContent = '--';
+  $('modal-fabric-dim').textContent = 'Đang kiểm tra Swatch 4:3...';
+  $('modal-fabric-dim').className = 'preview-result-status badge';
   $('modal-fabric-size').textContent = '--';
   $('modal-fabric-time').textContent = '--';
-  $('modal-status').textContent = 'Đang tải thông tin...';
+  $('modal-notice').textContent = '';
+  $('modal-notice').classList.add('hidden');
   $('modal-folder').textContent = currentModalFolder || 'Mặc định / Tự phát hiện';
   $('modal-completed-at').textContent = '--';
   $('modal-duration').textContent = '--';
@@ -2409,39 +2456,35 @@ async function openSkuModal(sku, folder) {
     }
 
     if (info.output) {
-      $('modal-output-dim').textContent = info.output.width ? (info.output.width + ' × ' + info.output.height + ' px') : 'Đã tạo';
-      $('modal-output-dim').className = 'badge ok';
+      const outputSize = info.output.width ? ` (${info.output.width} × ${info.output.height} px)` : '';
+      $('modal-output-dim').textContent = 'Đã tạo Seamless 2K' + outputSize;
+      $('modal-output-dim').className = 'preview-result-status badge ok';
       $('modal-output-size').textContent = info.output.size_formatted || '--';
       $('modal-output-time').textContent = info.duration_text || '--';
       $('modal-output-path').textContent = info.output.path || '--';
     } else {
       $('modal-output-img').style.display = 'none';
       $('modal-output-empty').classList.remove('hidden');
-      $('modal-output-dim').textContent = 'Chưa tạo';
-      $('modal-output-dim').className = 'badge pending';
+      $('modal-output-dim').textContent = 'Chưa tạo Seamless 2K';
+      $('modal-output-dim').className = 'preview-result-status badge pending';
     }
 
     if (info.fabric) {
-      $('modal-fabric-dim').textContent = info.fabric.width ? (info.fabric.width + ' × ' + info.fabric.height + ' px') : 'Đã tạo';
-      $('modal-fabric-dim').className = 'badge ok';
+      const fabricSize = info.fabric.width ? ` (${info.fabric.width} × ${info.fabric.height} px)` : '';
+      $('modal-fabric-dim').textContent = 'Đã tạo swatch 4:3' + fabricSize;
+      $('modal-fabric-dim').className = 'preview-result-status badge ok';
       $('modal-fabric-size').textContent = info.fabric.size_formatted || '--';
       $('modal-fabric-time').textContent = info.fabric_duration_text || '--';
     } else {
       $('modal-fabric-img').style.display = 'none';
       $('modal-fabric-empty').classList.remove('hidden');
-      $('modal-fabric-dim').textContent = 'Chưa tạo';
-      $('modal-fabric-dim').className = 'badge pending';
+      $('modal-fabric-dim').textContent = 'Chưa tạo swatch 4:3';
+      $('modal-fabric-dim').className = 'preview-result-status badge pending';
     }
 
-    const seamlessBadge = info.output
-      ? '<span class="badge ok">Đã tạo seamless 2K</span>'
-      : '<span class="badge pending">Chưa tạo seamless 2K</span>';
-    const fabricBadge = info.fabric
-      ? '<span class="badge ok">Đã tạo swatch 4:3</span>'
-      : '<span class="badge pending">Chưa tạo swatch 4:3</span>';
-    $('modal-status').innerHTML = seamlessBadge + ' ' + fabricBadge;
     if (info.quota_info) {
-      $('modal-status').innerHTML += ' <span class="badge" style="color:var(--amber); border-color:var(--amber); background:rgba(251,191,36,0.15)">⏳ Chờ quota: ' + escapeHtml(info.quota_info) + '</span>';
+      $('modal-notice').textContent = '⏳ Chờ quota: ' + info.quota_info;
+      $('modal-notice').classList.remove('hidden');
     }
     if (!info.output) {
       $('modal-output-path').textContent = (currentModalFolder ? ('output/chatgpt/' + currentModalFolder + '/') : 'output/chatgpt/') + sku + '/';
@@ -2452,7 +2495,8 @@ async function openSkuModal(sku, folder) {
       $('modal-duration').textContent = info.duration_text || '--';
     }
   } catch (e) {
-    $('modal-status').textContent = 'Lỗi đọc chi tiết: ' + e.message;
+    $('modal-notice').textContent = 'Lỗi đọc chi tiết: ' + e.message;
+    $('modal-notice').classList.remove('hidden');
   }
 }
 
@@ -3118,7 +3162,7 @@ function filterDriveTable() {
 
   if (!filtered.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="8" style="text-align:center; padding:32px;" class="hint">Không tìm thấy thư mục vải nào phù hợp với bộ lọc.</td>`;
+    tr.innerHTML = `<td colspan="9" style="text-align:center; padding:32px;" class="hint">Không tìm thấy thư mục vải nào phù hợp với bộ lọc.</td>`;
     tbody.appendChild(tr);
     return;
   }
@@ -3130,26 +3174,30 @@ function filterDriveTable() {
     const tdFolder = document.createElement('td');
     let badgeHtml = '';
     if (item.status === 'completed') {
-      badgeHtml = `<span class="badge ok" style="font-size:11px; padding:2px 6px;">✔ Xong 100%</span>`;
+      badgeHtml = `<span class="badge ok dt-status-badge">✔ Xong 100%</span>`;
     } else if (item.status === 'in_progress') {
-      badgeHtml = `<span class="badge" style="border-color:var(--cyan); color:var(--cyan); font-size:11px; padding:2px 6px;">⚡ Đang làm (${item.percent}%)</span>`;
+      badgeHtml = `<span class="badge dt-status-badge" style="border-color:var(--cyan); color:var(--cyan);">⚡ Đang làm (${item.percent}%)</span>`;
     } else if (!item.has_drive_url) {
-      badgeHtml = `<span class="badge-unlinked">⚠️ Chưa có Drive</span>`;
+      badgeHtml = `<span class="badge-unlinked dt-status-badge">⚠️ Chưa có Drive</span>`;
     } else {
-      badgeHtml = `<span class="badge pending" style="font-size:11px; padding:2px 6px;">⏳ Chưa tạo</span>`;
+      badgeHtml = `<span class="badge pending dt-status-badge">⏳ Chưa tạo</span>`;
     }
     tdFolder.innerHTML = `
-      <div style="display:flex; flex-direction:column; gap:4px;">
-        <div style="display:flex; align-items:center; gap:8px;">
-          <b style="font-size:14px; color:var(--text); cursor:pointer;" title="Bấm để lọc SKU thư mục này" onclick="selectFolderFilter('${escapeHtml(item.folder)}')">📁 ${escapeHtml(item.folder)}</b>
-          ${badgeHtml}
+      <div class="dt-folder-stack">
+        <div class="dt-folder-head">
+          <b class="dt-folder-name" title="Bấm để lọc SKU thư mục này" onclick="selectFolderFilter('${escapeHtml(item.folder)}')">📁 ${escapeHtml(item.folder)}</b>
         </div>
         <span class="hint" style="font-size:11px;">${item.total || 0} SKU trên máy</span>
       </div>
     `;
     tr.appendChild(tdFolder);
 
-    // 2. Google Drive Link
+    // 2. Folder Status
+    const tdStatus = document.createElement('td');
+    tdStatus.innerHTML = badgeHtml;
+    tr.appendChild(tdStatus);
+
+    // 3. Google Drive Link
     const tdUrl = document.createElement('td');
     if (item.url) {
       tdUrl.innerHTML = `
@@ -3165,7 +3213,7 @@ function filterDriveTable() {
     }
     tr.appendChild(tdUrl);
 
-    // 3. Drive Images Count
+    // 4. Drive Images Count
     const tdDrive = document.createElement('td');
     if (item.drive_total !== undefined && item.drive_total !== null) {
       const timeStr = item.last_sync_at ? `<div class="metric-sub">🕒 ${escapeHtml(item.last_sync_at.split(' ')[1] || item.last_sync_at)}</div>` : '';
@@ -3180,7 +3228,7 @@ function filterDriveTable() {
     }
     tr.appendChild(tdDrive);
 
-    // 4. Raw & Cropped
+    // 5. Raw & Cropped
     const tdRaw = document.createElement('td');
     tdRaw.innerHTML = `
       <div>✂ Crop: <b>${item.cropped_count || 0}</b></div>
@@ -3188,7 +3236,7 @@ function filterDriveTable() {
     `;
     tr.appendChild(tdRaw);
 
-    // 5. Created Artifacts
+    // 6. Created Artifacts
     const tdCreated = document.createElement('td');
     tdCreated.innerHTML = `
       <div>🎨 Seamless: <b class="ok">${item.seamless_count || 0}</b></div>
@@ -3196,7 +3244,7 @@ function filterDriveTable() {
     `;
     tr.appendChild(tdCreated);
 
-    // 6. Progress
+    // 7. Progress
     const tdProg = document.createElement('td');
     tdProg.innerHTML = `
       <div style="display:flex; align-items:center;">
@@ -3207,7 +3255,7 @@ function filterDriveTable() {
     `;
     tr.appendChild(tdProg);
 
-    // 7. Missing
+    // 8. Missing
     const tdMissing = document.createElement('td');
     if (item.pending_count > 0) {
       tdMissing.innerHTML = `<b class="amber" style="font-size:13px;">Thiếu ${item.pending_count} SKU</b>`;
@@ -3218,17 +3266,17 @@ function filterDriveTable() {
     }
     tr.appendChild(tdMissing);
 
-    // 8. Actions
+    // 9. Actions
     const tdActions = document.createElement('td');
     tdActions.style.textAlign = 'right';
     tdActions.style.whiteSpace = 'nowrap';
     tdActions.innerHTML = `
-      <div style="display:flex; gap:6px; justify-content:flex-end;">
+      <div class="dt-actions">
         <button type="button" class="ghost btn-sm" title="Đối chiếu chi tiết từng SKU" onclick="openFolderSkuAudit('${escapeHtml(item.folder)}', '${escapeHtml(item.url || '')}')">🔍 SKU</button>
         <button type="button" class="ghost btn-sm" style="color:var(--green); border-color:var(--green);" title="Chạy Thuật toán Seamless cho thư mục này" onclick="runSingleFolder('${escapeHtml(item.folder)}', '${escapeHtml(item.url || '')}', 'algo')">⚡ Thuật toán</button>
         <button type="button" class="primary btn-sm" title="Chạy ChatGPT cho thư mục này" onclick="runSingleFolder('${escapeHtml(item.folder)}', '${escapeHtml(item.url || '')}', 'chatgpt')">▶ Chạy</button>
         <button type="button" class="ghost btn-sm" title="Mở thư mục output trên máy" onclick="openFolderDirectory('${escapeHtml(item.folder)}')">📁</button>
-        ${item.url ? `<button type="button" class="danger btn-sm" title="Gỡ link Drive" onclick="unlinkDriveFolder('${escapeHtml(item.folder)}')">🗑️</button>` : ''}
+        ${item.url ? `<button type="button" class="danger btn-sm" title="Gỡ link Drive" onclick="unlinkDriveFolder('${escapeHtml(item.folder)}')">🗑️</button>` : `<button type="button" class="danger btn-sm dt-action-placeholder" tabindex="-1" aria-hidden="true">🗑️</button>`}
       </div>
     `;
     tr.appendChild(tdActions);
