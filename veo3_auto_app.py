@@ -1096,7 +1096,7 @@ def choose_local_folder(initial_dir=None):
     picker_script = (
         bundled_resource_dir() / "windows_folder_picker.ps1"
         if is_frozen()
-        else Path(__file__).resolve().parent / "windows_folder_picker.ps1"
+        else Path(__file__).resolve().parent / "tools" / "windows" / "windows_folder_picker.ps1"
     )
     if not picker_script.is_file():
         raise FileNotFoundError(f"Thiếu file chọn thư mục: {picker_script}")
@@ -1603,38 +1603,101 @@ class PipelineController:
             failures = self.read_quality_failures()["images"]
             for group in folders:
                 for image in group["images"]:
-                    image["failed"] = os.path.normcase(image["path"]) in failures
+                    image["failed"] = self.quality_failure_key(Path(image["path"])) in failures
         return {"path": str(root), "folders": folders}
+
+    @staticmethod
+    def quality_data_relative(path_value):
+        """Return a portable path beginning at output/ when one is present."""
+        parts = str(path_value or "").replace("\\", "/").split("/")
+        for index, part in enumerate(parts):
+            if part.casefold() == "output":
+                return "/".join(parts[index:])
+        return ""
+
+    def quality_failure_key(self, image, selected_root=None):
+        """Build a machine-independent identity for one quality image."""
+        image = Path(image).resolve()
+        data_relative = self.quality_data_relative(image)
+        if data_relative:
+            return "data:" + data_relative.casefold()
+        try:
+            relative = image.relative_to(self.project_dir.resolve()).as_posix()
+            return "project:" + relative.casefold()
+        except ValueError:
+            pass
+        root = selected_root
+        if root is None:
+            roots = tuple(self.quality_folders)
+            root = max(
+                (candidate for candidate in roots if candidate == image or candidate in image.parents),
+                key=lambda candidate: len(candidate.parts),
+            )
+        return "selected:" + image.relative_to(Path(root).resolve()).as_posix().casefold()
+
+    def normalize_quality_failures(self, data):
+        """Convert legacy absolute-path records into the portable version-2 schema."""
+        if not isinstance(data, dict) or data.get("version") not in {1, 2} or not isinstance(data.get("images"), dict):
+            raise ValueError("failed_image_ids.json không đúng định dạng.")
+        normalized = {"version": 2, "images": {}}
+        for old_key, record in data["images"].items():
+            if not isinstance(record, dict):
+                continue
+            if data.get("version") == 2 and ":" in str(old_key):
+                key = str(old_key).casefold()
+                relative = str(record.get("relative_path", "")).replace("\\", "/")
+                path_base = str(record.get("path_base", key.split(":", 1)[0]))
+            else:
+                data_relative = self.quality_data_relative(record.get("image_path", ""))
+                if data_relative:
+                    key, relative, path_base = "data:" + data_relative.casefold(), data_relative, "data"
+                else:
+                    relative = str(record.get("relative_path", "")).replace("\\", "/")
+                    key, path_base = "selected:" + relative.casefold(), "selected"
+            if not relative:
+                # Keep an opaque legacy marker without retaining its machine path.
+                relative = str(record.get("file_name", old_key)).replace("\\", "/").split("/")[-1]
+                key, path_base = "legacy:" + relative.casefold(), "legacy"
+            normalized["images"][key] = {
+                "path_base": path_base,
+                "relative_path": relative,
+                "file_name": str(record.get("file_name", Path(relative).name)),
+                "marked_at": str(record.get("marked_at", "")),
+            }
+        return normalized
 
     def read_quality_failures(self):
         path = self.project_dir / "failed_image_logs" / "failed_image_ids.json"
         if not path.exists():
             path = self.project_dir / "failed_image_ids.json"
         if not path.exists():
-            return {"version": 1, "images": {}}
+            return {"version": 2, "images": {}}
         # Do not overwrite unreadable or incompatible existing records.
         with path.open("r", encoding="utf-8") as stream:
             data = json.load(stream)
-        if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("images"), dict):
-            raise ValueError("failed_image_ids.json không đúng định dạng.")
-        return data
+        return self.normalize_quality_failures(data)
 
     def set_quality_image_failure(self, payload):
         if not isinstance(payload.get("failed"), bool):
             raise ValueError("Trạng thái fail phải là true hoặc false.")
         image = self.resolve_quality_image(payload.get("image_path"))
         failed = payload["failed"]
-        key = os.path.normcase(str(image))
         with self.lock:
             data = self.read_quality_failures()
+            root = max((root for root in self.quality_folders if root in image.parents), key=lambda root: len(root.parts))
+            key = self.quality_failure_key(image, root)
             if failed:
-                root = max((root for root in self.quality_folders if root in image.parents), key=lambda root: len(root.parts))
+                path_base = key.split(":", 1)[0]
+                if path_base == "data":
+                    relative_path = self.quality_data_relative(image)
+                elif path_base == "project":
+                    relative_path = image.relative_to(self.project_dir.resolve()).as_posix()
+                else:
+                    relative_path = image.relative_to(root.resolve()).as_posix()
                 data["images"][key] = {
-                    "image_path": str(image),
+                    "path_base": path_base,
+                    "relative_path": relative_path,
                     "file_name": image.name,
-                    "image_directory": str(image.parent),
-                    "selected_root": str(root),
-                    "relative_path": image.relative_to(root).as_posix(),
                     "marked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 }
             else:
@@ -1653,7 +1716,7 @@ class PipelineController:
         jobs = {}
         for value in paths:
             image = self.resolve_quality_image(value)
-            if folder not in image.parents or os.path.normcase(str(image)) not in failures:
+            if folder not in image.parents or self.quality_failure_key(image) not in failures:
                 raise ValueError("Chỉ được chọn ảnh fail trong folder đang xem.")
             data_root = next((parent for parent in image.parents if (parent / "textures_raw").is_dir() and (parent / "output") in image.parents), None)
             if data_root is None:

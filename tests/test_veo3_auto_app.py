@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import veo3_auto_app as app
 import run_chatgpt_texture_grouped_batch as grouped
-from prepare_build_assets import create_default_config
+from tools.build.prepare_build_assets import create_default_config
 
 
 class VEO3AutoAppTests(unittest.TestCase):
@@ -239,7 +239,9 @@ class VEO3AutoAppTests(unittest.TestCase):
             instance.quality_folders = {root}
             instance.set_quality_image_failure({"image_path": str(image), "failed": True})
             self.assertEqual(len(instance.read_quality_failures()["images"]), 2)
-            self.assertTrue((root / "failed_image_logs" / "failed_image_ids.json").exists())
+            saved = json.loads((root / "failed_image_logs" / "failed_image_ids.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["version"], 2)
+            self.assertTrue(all("image_path" not in record for record in saved["images"].values()))
 
     def test_quality_failures_persist_reload_and_remove_by_exact_image_path(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -260,7 +262,11 @@ class VEO3AutoAppTests(unittest.TestCase):
                 instance.set_quality_image_failure({"image_path": str(image), "failed": True})
             records = json.loads((root / "failed_image_logs" / "failed_image_ids.json").read_text(encoding="utf-8"))["images"]
             self.assertEqual(len(records), 2)
-            self.assertEqual({record["image_path"] for record in records.values()}, set(map(str, images)))
+            self.assertEqual(
+                {record["relative_path"] for record in records.values()},
+                {"chatgpt/CHKK/CHKK1/image_1.png", "chatgpt/CHKK/CHKK2/image_1.png"},
+            )
+            self.assertTrue(all(not Path(record["relative_path"]).is_absolute() for record in records.values()))
             with patch.object(app, "choose_local_folder", return_value=str(selected)):
                 reloaded = controller()
                 self.assertTrue(all(image["failed"] for image in reloaded.select_quality_folder()["folders"][0]["images"]))
@@ -275,6 +281,34 @@ class VEO3AutoAppTests(unittest.TestCase):
             with self.assertRaises(json.JSONDecodeError):
                 instance.set_quality_image_failure({"image_path": str(images[0]), "failed": True})
             self.assertEqual((root / "failed_image_logs" / "failed_image_ids.json").read_text(), "broken")
+
+    def test_quality_failure_v1_absolute_path_matches_same_output_after_repo_move(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            selected = root / "output" / "chatgpt"
+            image = selected / "CHKK" / "CHKK1" / "image_1.png"
+            image.parent.mkdir(parents=True)
+            image.touch()
+            legacy = {
+                "version": 1,
+                "images": {
+                    "c:/users/alice/old-repo/output/chatgpt/chkk/chkk1/image_1.png": {
+                        "image_path": "C:\\Users\\Alice\\old-repo\\output\\chatgpt\\CHKK\\CHKK1\\image_1.png",
+                        "relative_path": "CHKK/CHKK1/image_1.png",
+                        "file_name": "image_1.png",
+                    }
+                },
+            }
+            (root / "failed_image_ids.json").write_text(json.dumps(legacy), encoding="utf-8")
+            instance = app.PipelineController.__new__(app.PipelineController)
+            instance.project_dir = root
+            instance.lock = threading.RLock()
+            instance.quality_folders = {selected}
+
+            normalized = instance.read_quality_failures()
+
+            self.assertIn("data:output/chatgpt/chkk/chkk1/image_1.png", normalized["images"])
+            self.assertIn(instance.quality_failure_key(image), normalized["images"])
 
     def test_quality_chatgpt_groups_collect_code_images_in_numeric_order(self):
         with tempfile.TemporaryDirectory() as temporary:

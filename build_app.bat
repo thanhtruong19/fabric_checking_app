@@ -19,11 +19,11 @@ echo Installing/updating standalone build dependencies...
 if errorlevel 1 goto :error
 
 echo Preparing safe first-run assets...
-"%PYTHON_EXE%" "%~dp0prepare_build_assets.py" "%~dp0config.json" "%~dp0build\runtime_assets\config.default.json"
+"%PYTHON_EXE%" "%~dp0tools\build\prepare_build_assets.py" "%~dp0config.json" "%~dp0build\runtime_assets\config.default.json"
 if errorlevel 1 goto :error
 
 echo Building VEO3_AUTO_APP.exe...
-"%PYTHON_EXE%" "%~dp0build_with_pyinstaller.py" ^
+"%PYTHON_EXE%" "%~dp0tools\build\build_with_pyinstaller.py" ^
   --noconfirm ^
   --clean ^
   --onefile ^
@@ -35,7 +35,7 @@ echo Building VEO3_AUTO_APP.exe...
   --add-data "%~dp0build\runtime_assets\config.default.json;runtime_assets" ^
   --add-data "%~dp0prompts;runtime_assets\prompts" ^
   --add-data "%~dp0dashboard;runtime_assets\dashboard" ^
-  --add-data "%~dp0windows_folder_picker.ps1;runtime_assets" ^
+  --add-data "%~dp0tools\windows\windows_folder_picker.ps1;runtime_assets" ^
   "%~dp0veo3_auto_app.py"
 if errorlevel 1 goto :error
 

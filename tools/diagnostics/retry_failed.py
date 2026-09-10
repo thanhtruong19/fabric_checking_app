@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = Path(__file__).resolve().parents[2]
 CONFIG_FILE = PROJECT_DIR / "config.json"
 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
     config = json.load(f)

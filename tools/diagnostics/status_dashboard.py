@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = Path(__file__).resolve().parents[2]
 DASHBOARD_DIR = PROJECT_DIR / "dashboard"
 CONFIG_PATH = PROJECT_DIR / "config.json"
 INSTANCE_LOCK_PATH = PROJECT_DIR / ".run_batch.lock"

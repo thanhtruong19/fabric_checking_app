@@ -56,10 +56,10 @@ if /i not "%BUILD_PYINSTALLER%"=="y" goto :done
 
 echo.
 echo [2/2] Dang build ban PyInstaller Dev [Onedir + Console, tan dung cache]...
-"%PYTHON_EXE%" "%~dp0prepare_build_assets.py" "%~dp0config.json" "%~dp0build\runtime_assets\config.default.json"
+"%PYTHON_EXE%" "%~dp0tools\build\prepare_build_assets.py" "%~dp0config.json" "%~dp0build\runtime_assets\config.default.json"
 if errorlevel 1 goto :error
 
-"%PYTHON_EXE%" "%~dp0build_with_pyinstaller.py" ^
+"%PYTHON_EXE%" "%~dp0tools\build\build_with_pyinstaller.py" ^
   --noconfirm ^
   --onedir ^
   --console ^
@@ -70,7 +70,7 @@ if errorlevel 1 goto :error
   --add-data "%~dp0build\runtime_assets\config.default.json;runtime_assets" ^
   --add-data "%~dp0prompts;runtime_assets\prompts" ^
   --add-data "%~dp0dashboard;runtime_assets\dashboard" ^
-  --add-data "%~dp0windows_folder_picker.ps1;runtime_assets" ^
+  --add-data "%~dp0tools\windows\windows_folder_picker.ps1;runtime_assets" ^
   "%~dp0veo3_auto_app.py"
 if errorlevel 1 goto :error
 

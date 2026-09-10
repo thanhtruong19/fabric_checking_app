@@ -13,5 +13,5 @@ if not defined PYTHON_EXE (
 
 cd /d "%~dp0"
 echo Using Python: %PYTHON_EXE%
-"%PYTHON_EXE%" -u "%~dp0status_dashboard.py" --open %*
+"%PYTHON_EXE%" -u "%~dp0tools\diagnostics\status_dashboard.py" --open %*
 endlocal

@@ -149,7 +149,9 @@ class QualityOutputTests(unittest.TestCase):
         self.assertIn("-STA", command)
         self.assertIn("-File", command)
         self.assertTrue(command[command.index("-File") + 1].endswith("windows_folder_picker.ps1"))
-        script = (Path(__file__).parent / "windows_folder_picker.ps1").read_text(encoding="utf-8")
+        script = (
+            Path(__file__).parent.parent / "tools" / "windows" / "windows_folder_picker.ps1"
+        ).read_text(encoding="utf-8")
         self.assertIn("FileOpenOptions.PickFolders", script)
         self.assertIn("dialog.SetOkButtonLabel", script)
 

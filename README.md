@@ -66,7 +66,23 @@ File chạy xuất ra tại: `dist\VEO3_AUTO_APP.exe`.
 
 ## 🧪 Kiểm thử
 ```powershell
-python -m unittest discover -p "test_*.py"
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+## 🗂️ Cấu trúc dự án
+
+```text
+fabrics/
+├── run_app.bat, run_app_dev.bat   # Chạy ứng dụng
+├── build_app.bat                  # Đóng gói bản phát hành
+├── veo3_auto_app.py               # Backend/API chính
+├── dashboard/                     # HTML, CSS và JavaScript
+├── docs/                          # Tài liệu và hướng dẫn
+├── tests/                         # Kiểm thử tự động
+├── tools/build/                   # Công cụ hỗ trợ PyInstaller
+├── tools/diagnostics/             # Công cụ kiểm tra và sửa trạng thái
+├── tools/windows/                 # Tích hợp native Windows
+└── prompts/                       # Prompt dùng cho pipeline
 ```
 
 ---

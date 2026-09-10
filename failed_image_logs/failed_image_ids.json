@@ -1,109 +1,47 @@
 {
-  "version": 1,
+  "version": 2,
   "images": {
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\bno\\bno1m2\\seamless_texture.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\BNO\\BNO1M2\\seamless_texture.png",
+    "data:output/chatgpt/bno/bno1m2/seamless_texture.png": {
+      "path_base": "data",
+      "relative_path": "output/chatgpt/BNO/BNO1M2/seamless_texture.png",
       "file_name": "seamless_texture.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\BNO\\BNO1M2",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt",
-      "relative_path": "BNO/BNO1M2/seamless_texture.png",
       "marked_at": "2026-09-08T04:33:43.140512+00:00"
     },
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\dehq\\dehq2\\seamless_texture.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\DEHQ\\DEHQ2\\seamless_texture.png",
+    "data:output/chatgpt/wdti/wdti423/seamless_texture.png": {
+      "path_base": "data",
+      "relative_path": "output/chatgpt/WDTI/WDTI423/seamless_texture.png",
       "file_name": "seamless_texture.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\DEHQ\\DEHQ2",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt",
-      "relative_path": "DEHQ/DEHQ2/seamless_texture.png",
-      "marked_at": "2026-09-08T05:24:38.629309+00:00"
-    },
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\dehq\\dehq3\\seamless_texture.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\DEHQ\\DEHQ3\\seamless_texture.png",
-      "file_name": "seamless_texture.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\DEHQ\\DEHQ3",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt",
-      "relative_path": "DEHQ/DEHQ3/seamless_texture.png",
-      "marked_at": "2026-09-08T05:31:32.190323+00:00"
-    },
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\dehq\\dehq1\\seamless_texture.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\DEHQ\\DEHQ1\\seamless_texture.png",
-      "file_name": "seamless_texture.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\DEHQ\\DEHQ1",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt",
-      "relative_path": "DEHQ/DEHQ1/seamless_texture.png",
-      "marked_at": "2026-09-08T05:42:26.905337+00:00"
-    },
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\wdti\\wdti423\\seamless_texture.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\WDTI\\WDTI423\\seamless_texture.png",
-      "file_name": "seamless_texture.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\WDTI\\WDTI423",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\WDTI",
-      "relative_path": "WDTI423/seamless_texture.png",
       "marked_at": "2026-09-08T07:39:56.028595+00:00"
     },
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\1013\\101301\\image_1.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\1013\\101301\\image_1.png",
+    "data:output/chatgpt/1013/101301/image_1.png": {
+      "path_base": "data",
+      "relative_path": "output/chatgpt/1013/101301/image_1.png",
       "file_name": "image_1.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\1013\\101301",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt",
-      "relative_path": "1013/101301/image_1.png",
       "marked_at": "2026-09-08T08:37:27.546596+00:00"
     },
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\1013\\101301\\seamless_texture.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\1013\\101301\\seamless_texture.png",
+    "data:output/chatgpt/1013/101301/seamless_texture.png": {
+      "path_base": "data",
+      "relative_path": "output/chatgpt/1013/101301/seamless_texture.png",
       "file_name": "seamless_texture.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\1013\\101301",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt",
-      "relative_path": "1013/101301/seamless_texture.png",
       "marked_at": "2026-09-08T08:37:28.054289+00:00"
     },
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\nhth\\nhth1\\seamless_texture.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\NHTH\\NHTH1\\seamless_texture.png",
+    "data:output/chatgpt/nhth/nhth1/seamless_texture.png": {
+      "path_base": "data",
+      "relative_path": "output/chatgpt/NHTH/NHTH1/seamless_texture.png",
       "file_name": "seamless_texture.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\NHTH\\NHTH1",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt",
-      "relative_path": "NHTH/NHTH1/seamless_texture.png",
-      "marked_at": "2026-09-08T08:37:31.780496+00:00"
-    },
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\nhth\\nhth2\\seamless_texture.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\NHTH\\NHTH2\\seamless_texture.png",
-      "file_name": "seamless_texture.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\NHTH\\NHTH2",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt",
-      "relative_path": "NHTH/NHTH2/seamless_texture.png",
-      "marked_at": "2026-09-08T08:37:32.254439+00:00"
-    },
-    "c:\\users\\admin\\downloads\\source and output\\source_and_output\\output\\chatgpt\\nhth\\nhth3\\seamless_texture.png": {
-      "image_path": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\NHTH\\NHTH3\\seamless_texture.png",
-      "file_name": "seamless_texture.png",
-      "image_directory": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt\\NHTH\\NHTH3",
-      "selected_root": "C:\\Users\\ADMIN\\Downloads\\source and output\\source_and_output\\output\\chatgpt",
-      "relative_path": "NHTH/NHTH3/seamless_texture.png",
-      "marked_at": "2026-09-08T08:37:35.493132+00:00"
-    },
-    "d:\\thanh's coding workspace\\fabrics\\fabrics\\output\\chatgpt\\nhth\\nhth1\\seamless_texture.png": {
-      "image_path": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\NHTH\\NHTH1\\seamless_texture.png",
-      "file_name": "seamless_texture.png",
-      "image_directory": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\NHTH\\NHTH1",
-      "selected_root": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\NHTH\\NHTH1",
-      "relative_path": "seamless_texture.png",
       "marked_at": "2026-09-08T08:59:16.514160+00:00"
     },
-    "d:\\thanh's coding workspace\\fabrics\\fabrics\\output\\chatgpt\\dehq\\dehq1\\seamless_texture.png": {
-      "image_path": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\DEHQ\\DEHQ1\\seamless_texture.png",
+    "data:output/chatgpt/nhth/nhth2/seamless_texture.png": {
+      "path_base": "data",
+      "relative_path": "output/chatgpt/NHTH/NHTH2/seamless_texture.png",
       "file_name": "seamless_texture.png",
-      "image_directory": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\DEHQ\\DEHQ1",
-      "selected_root": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt",
-      "relative_path": "DEHQ/DEHQ1/seamless_texture.png",
-      "marked_at": "2026-09-10T04:40:21.416522+00:00"
+      "marked_at": "2026-09-08T08:37:32.254439+00:00"
     },
-    "d:\\thanh's coding workspace\\fabrics\\fabrics\\output\\chatgpt\\dehq\\dehq1\\seamless_texture_chatgpt_raw.png": {
-      "image_path": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\DEHQ\\DEHQ1\\seamless_texture_chatgpt_raw.png",
-      "file_name": "seamless_texture_chatgpt_raw.png",
-      "image_directory": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\DEHQ\\DEHQ1",
-      "selected_root": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt",
-      "relative_path": "DEHQ/DEHQ1/seamless_texture_chatgpt_raw.png",
-      "marked_at": "2026-09-10T04:40:22.058862+00:00"
+    "data:output/chatgpt/nhth/nhth3/seamless_texture.png": {
+      "path_base": "data",
+      "relative_path": "output/chatgpt/NHTH/NHTH3/seamless_texture.png",
+      "file_name": "seamless_texture.png",
+      "marked_at": "2026-09-08T08:37:35.493132+00:00"
     }
   }
 }

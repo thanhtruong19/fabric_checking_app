@@ -1,5 +1,11 @@
 """Safely test the isolated Chrome remote-debugging connection."""
+import sys
 import urllib.request
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).resolve().parents[2]
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
 
 from run_batch import CDP_PORT, CDP_URL, CHROME_USER_DATA_DIR, cdp_is_ready, launch_automation_chrome
 
