@@ -955,6 +955,7 @@ def connect_to_automation_chrome(playwright):
         raise ValueError("chatgpt.cdp_connect_attempts must be at least 1.")
 
     last_error = None
+    chrome_restarted = False
     for attempt in range(1, CDP_CONNECT_ATTEMPTS + 1):
         if not shared.cdp_is_ready():
             last_error = RuntimeError(
@@ -978,6 +979,15 @@ def connect_to_automation_chrome(playwright):
             except Exception as exc:
                 last_error = exc
                 print(f"  Attempt {attempt} failed: {exc}")
+        if attempt == 2 and attempt < CDP_CONNECT_ATTEMPTS and not chrome_restarted:
+            print("  CDP handshake failed twice; restarting only automation Chrome...")
+            try:
+                shared.restart_automation_chrome()
+                chrome_restarted = True
+                print("  Automation Chrome restarted; reconnecting with the saved profile.")
+            except Exception as exc:
+                last_error = exc
+                print(f"  Automatic Chrome restart failed: {exc}")
         if attempt < CDP_CONNECT_ATTEMPTS:
             print(f"  Retrying in {CDP_CONNECT_RETRY_SECONDS:.1f}s...")
             time.sleep(CDP_CONNECT_RETRY_SECONDS)

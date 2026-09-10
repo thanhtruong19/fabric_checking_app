@@ -69,6 +69,8 @@ if errorlevel 1 goto :error
   --specpath "%~dp0build" ^
   --add-data "%~dp0build\runtime_assets\config.default.json;runtime_assets" ^
   --add-data "%~dp0prompts;runtime_assets\prompts" ^
+  --add-data "%~dp0dashboard;runtime_assets\dashboard" ^
+  --add-data "%~dp0windows_folder_picker.ps1;runtime_assets" ^
   "%~dp0veo3_auto_app.py"
 if errorlevel 1 goto :error
 

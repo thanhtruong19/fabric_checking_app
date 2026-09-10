@@ -231,6 +231,34 @@ def launch_automation_chrome():
     )
 
 
+def restart_automation_chrome():
+    """Restart only the Chrome browser process listening on the configured CDP port."""
+    print(f"Restarting stale automation Chrome on port {CDP_PORT}...")
+    script = (
+        f"$ids=Get-NetTCPConnection -State Listen -LocalPort {CDP_PORT} "
+        "-ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique;"
+        "foreach($id in $ids){Stop-Process -Id $id -Force -ErrorAction Stop}"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=15,
+        check=False,
+        creationflags=0x08000000,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr.strip() or "Could not stop the stale automation Chrome process."
+        )
+    deadline = time.monotonic() + 10
+    while cdp_is_ready() and time.monotonic() < deadline:
+        time.sleep(0.25)
+    launch_automation_chrome()
+
+
 def ensure_flow_project(page):
     """Open an existing Flow project, or create one when the account has none."""
     if "/flow/project/" in page.url and "/edit/" not in page.url:

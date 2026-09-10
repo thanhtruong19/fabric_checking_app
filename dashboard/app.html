@@ -1,0 +1,689 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VEO3 Auto Pipeline</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<main class="shell">
+  <header>
+    <div><h1>VEO3 Auto Pipeline</h1><div class="subtitle">Drive → Crop → Seamless (01) → Swatch (02) → Package</div></div>
+    <div id="status" class="badge">Đang kết nối...</div>
+  </header>
+
+  <!-- Main Navigation Tabs -->
+  <nav class="tab-nav">
+    <button id="nav-tab-dashboard" class="tab-nav-btn active" type="button" onclick="switchTab('dashboard')">
+      🚀 <span>1. Điều khiển & Cấu hình</span>
+    </button>
+    <button id="nav-tab-progress" class="tab-nav-btn" type="button" onclick="switchTab('progress')">
+      📊 <span>2. Tiến độ & Danh sách vải</span>
+      <span id="nav-progress-badge" class="tab-nav-badge">0%</span>
+    </button>
+    <button id="nav-tab-audit" class="tab-nav-btn" type="button" onclick="switchTab('audit')">
+      📁 <span>3. Quản lý Drive & So sánh vải</span>
+      <span id="nav-audit-badge" class="tab-nav-badge">0</span>
+    </button>
+    <button id="nav-tab-quality" class="tab-nav-btn" type="button" onclick="switchTab('quality')">
+      🔍 <span>4. Test vải</span>
+    </button>
+  </nav>
+
+  <button id="nav-tab-logs" class="floating-log-nav" type="button"
+          onclick="openLogPopup()" title="Mở Nhật ký thời gian thực"
+          aria-label="Mở Nhật ký thời gian thực" aria-expanded="false">
+    📜 <span class="floating-log-label">Nhật ký thời gian thực</span>
+  </button>
+
+  <!-- Quota Exhausted Alert Banner -->
+  <div id="quota-banner" class="quota-banner hidden">
+    <div class="quota-banner-icon">⏳</div>
+    <div class="quota-banner-body">
+      <div class="quota-banner-title">⚠️ ĐÃ HẾT HẠN MỨC (QUOTA) TẠO ẢNH CỦA CHATGPT</div>
+      <div id="quota-banner-text" class="quota-banner-text">Đang tải thông tin hạn mức...</div>
+    </div>
+    <button type="button" class="quota-banner-close" title="Ẩn thông báo" onclick="dismissQuotaBanner()">✕ Đóng</button>
+  </div>
+
+  <!-- TAB 1: Dashboard & Settings -->
+  <section id="tab-dashboard" class="tab-content">
+    <div class="grid">
+      <!-- Left Column: Source & Control -->
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div class="card">
+          <h2>📁 Nguồn ảnh vải</h2>
+          <div class="source-tabs">
+            <label class="source-tab"><input id="source-drive" name="source-mode" type="radio" value="drive" checked> Google Drive</label>
+            <label class="source-tab"><input id="source-local" name="source-mode" type="radio" value="local"> Thư mục local</label>
+          </div>
+          <div id="drive-source">
+            <label>Danh sách & Quản lý thư mục Google Drive</label>
+            <div class="drive-list-toolbar">
+              <input id="drive-folder-search" type="text" placeholder="🔎 Tìm theo tên thư mục..." autocomplete="off">
+              <span id="drive-folder-count" class="drive-list-count"></span>
+            </div>
+            <div id="drive-folders-list" class="drive-manager-box"></div>
+            <div id="drive-pagination" class="drive-pagination hidden">
+              <button id="drive-page-prev" type="button" class="ghost btn-sm">← Trước</button>
+              <span id="drive-page-info" class="drive-page-info"></span>
+              <button id="drive-page-next" type="button" class="ghost btn-sm">Sau →</button>
+            </div>
+            
+            <div style="margin-top: 10px;">
+              <label>Thêm Link Drive mới</label>
+              <div class="drive-add-row">
+                <input id="new-drive-url" type="text" placeholder="https://drive.google.com/drive/folders/...">
+                <input id="new-drive-folder" type="text" placeholder="Tên thư mục (VD: ABC)">
+                <button id="add-drive-btn" type="button" class="ghost">+ Thêm</button>
+              </div>
+            </div>
+            <div class="hint">Mỗi link Drive sẽ được tải và xuất kết quả vào thư mục con mang tên tương ứng.</div>
+          </div>
+          <div id="local-source" class="hidden">
+            <label for="local-folder">Thư mục chứa ảnh vải trên máy</label>
+            <div class="row"><input id="local-folder" type="text" readonly placeholder="Chưa chọn thư mục"><button id="browse" type="button">Chọn thư mục</button></div>
+            <div class="hint">Khi dùng local, bước Import Drive sẽ được bỏ qua. Ảnh gốc không bị sửa hoặc xóa.</div>
+          </div>
+          <div class="fields">
+            <div><label for="sku">SKU (để trống = tất cả)</label><input id="sku" type="text" placeholder="SP1M29"></div>
+            <div><label for="limit">Giới hạn</label><input id="limit" type="number" min="1" placeholder="Tất cả"></div>
+            <div><label for="perchat">Ảnh mỗi chat</label><input id="perchat" type="number" min="1" max="20" value="10"></div>
+          </div>
+          <div class="actions" style="margin-top: 12px;"><button id="save" class="ghost">💾 Lưu cấu hình</button></div>
+        </div>
+
+        <div class="card">
+          <h2>⚡ Chọn luồng & Điều hành (ChatGPT Pipeline)</h2>
+          <div class="checks">
+            <label class="check"><input id="flow-import" type="checkbox" checked> 1. Import Drive</label>
+            <label class="check"><input id="flow-crop" type="checkbox" checked> 2. Crop cố định</label>
+            <label class="check"><input id="flow-seamless" type="checkbox" checked> 3. Tạo seamless (01_TEXTURE)</label>
+            <div style="margin-left: 22px; margin-top: -4px; margin-bottom: 4px; font-size: 12px; color: var(--green); grid-column: 1 / -1;">
+              ✨ Tự động hậu kỳ vá mép ảnh ChatGPT bằng thuật toán Efros-Freeman
+            </div>
+            <label class="check"><input id="flow-fabric" type="checkbox" checked> 4. Tạo swatch vải (02_FABRIC)</label>
+            <label class="check"><input id="flow-package" type="checkbox" checked> 5. Đóng gói SKU</label>
+            <label class="check"><input id="dry" type="checkbox"> Chỉ xem trước</label>
+            <label class="check"><input id="force" type="checkbox"> Cho phép thay thế</label>
+            <label class="check" style="color:var(--cyan); grid-column: 1 / -1;"><input id="auto-retry" type="checkbox" checked> 🔄 Tự động thử lại khi lỗi (Auto-Restart)</label>
+          </div>
+          <div class="fields" style="margin-top: 8px;">
+            <div><label for="retry-delay">Chờ thử lại (giây)</label><input id="retry-delay" type="number" min="5" max="3600" value="120" placeholder="120s"></div>
+            <div><label for="retry-max">Số lần thử lại tối đa</label><input id="retry-max" type="number" min="0" max="100" value="10" placeholder="10 (0 = ∞)"></div>
+          </div>
+          <div class="actions" style="display:flex; flex-wrap:wrap; gap:8px;">
+            <button id="run" class="primary">▶ Chạy ChatGPT Pipeline</button>
+            <button id="run-algo" class="primary" style="background:linear-gradient(135deg, #059669 0%, #047857 100%);" title="Quét và sửa lỗi đường nối cho các texture ChatGPT đã tạo">🔧 Vá lỗi Seamless (Fix Seams)</button>
+            <button id="run-flow" class="primary" style="background:linear-gradient(135deg, #0284c7 0%, #0369a1 100%);">🌊 Chạy Google Flow</button>
+            <button id="stop" class="danger" disabled>⏹ Dừng</button>
+            <button id="chrome" class="ghost">🌐 Mở Chrome</button>
+            <button id="check" class="ghost">🔍 Check ChatGPT</button>
+            <button id="check-flow" class="ghost">🔍 Check Flow</button>
+          </div>
+          <div id="progress" class="progress"><span></span></div>
+        </div>
+      </div>
+
+      <!-- Right Column: Prompt Settings & Environment -->
+      <div style="display:flex; flex-direction:column; gap:14px;">
+        <div class="card">
+          <div class="card-header-flex">
+            <h2>⚙️ Cấu hình Prompt</h2>
+            <div class="hint" style="margin:0;">Đính kèm file hoặc Nhập thủ công</div>
+          </div>
+
+          <!-- Prompt Sub-tabs -->
+          <div class="prompt-subtabs">
+            <button id="prompt-subtab-tex" type="button" class="prompt-subtab-btn active" onclick="switchPromptSubTab('texture')">
+              🎨 3. Seamless (01)
+            </button>
+            <button id="prompt-subtab-fab" type="button" class="prompt-subtab-btn" onclick="switchPromptSubTab('fabric')">
+              👗 4. Swatch vải (02)
+            </button>
+            <button id="prompt-subtab-flow" type="button" class="prompt-subtab-btn" onclick="switchPromptSubTab('flow')">
+              🌊 Google Flow Prompt
+            </button>
+          </div>
+
+          <!-- Sub-panel: Seamless Texture -->
+          <div id="prompt-panel-tex" class="prompt-panel">
+            <div class="prompt-panel-title">
+              <span>Cấu hình: Seamless Texture (01_TEXTURE)</span>
+              <span id="tex-prompt-badge" class="badge ok">Đính kèm file</span>
+            </div>
+            <div class="source-tabs" style="margin: 4px 0;">
+              <label class="source-tab"><input id="tex-prompt-mode-attach" name="tex-prompt-mode" type="radio" value="attachment" checked onchange="updatePromptUI()"> 📎 Đính kèm file</label>
+              <label class="source-tab"><input id="tex-prompt-mode-manual" name="tex-prompt-mode" type="radio" value="manual" onchange="updatePromptUI()"> 📝 Nhập thủ công</label>
+            </div>
+            <div id="tex-attachment-box">
+              <label for="tex-prompt-file">Đường dẫn file Master Prompt</label>
+              <div class="row">
+                <input id="tex-prompt-file" type="text" placeholder="prompts/prompts_attachments/01_TEXTURE_SEAMLESS_MASTER.md">
+                <button id="browse-tex-prompt" type="button" class="ghost">📁 Chọn file</button>
+              </div>
+              <div class="hint">File tài liệu sẽ được đính kèm vào ChatGPT cùng ảnh ở lượt đầu tiên.</div>
+            </div>
+            <div id="tex-manual-box" class="hidden">
+              <label for="tex-prompt-text">Nội dung Master Prompt thủ công</label>
+              <textarea id="tex-prompt-text" class="prompt-textarea" rows="7" placeholder="Nhập nội dung prompt cho Seamless Texture..." oninput="updatePromptCounts()"></textarea>
+              <div class="prompt-action-bar">
+                <button id="load-default-tex-prompt" type="button" class="ghost btn-sm">🔄 Tải từ file mẫu</button>
+                <span id="tex-prompt-count" class="hint">0 ký tự</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sub-panel: Fabric Swatch -->
+          <div id="prompt-panel-fab" class="prompt-panel hidden">
+            <div class="prompt-panel-title">
+              <span>Cấu hình: Swatch vải (02_FABRIC)</span>
+              <span id="fab-prompt-badge" class="badge ok">Đính kèm file</span>
+            </div>
+            <div class="source-tabs" style="margin: 4px 0;">
+              <label class="source-tab"><input id="fab-prompt-mode-attach" name="fab-prompt-mode" type="radio" value="attachment" checked onchange="updatePromptUI()"> 📎 Đính kèm file</label>
+              <label class="source-tab"><input id="fab-prompt-mode-manual" name="fab-prompt-mode" type="radio" value="manual" onchange="updatePromptUI()"> 📝 Nhập thủ công</label>
+            </div>
+            <div id="fab-attachment-box">
+              <label for="fab-prompt-file">Đường dẫn file Master Prompt</label>
+              <div class="row">
+                <input id="fab-prompt-file" type="text" placeholder="prompts/prompts_attachments/02_FABRIC_SWATCH_MASTER.md">
+                <button id="browse-fab-prompt" type="button" class="ghost">📁 Chọn file</button>
+              </div>
+              <div class="hint">File tài liệu sẽ được đính kèm vào ChatGPT cùng ảnh ở lượt đầu tiên.</div>
+            </div>
+            <div id="fab-manual-box" class="hidden">
+              <label for="fab-prompt-text">Nội dung Master Prompt thủ công</label>
+              <textarea id="fab-prompt-text" class="prompt-textarea" rows="7" placeholder="Nhập nội dung prompt cho Fabric Swatch..." oninput="updatePromptCounts()"></textarea>
+              <div class="prompt-action-bar">
+                <button id="load-default-fab-prompt" type="button" class="ghost btn-sm">🔄 Tải từ file mẫu</button>
+                <span id="fab-prompt-count" class="hint">0 ký tự</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sub-panel: Google Flow Texture -->
+          <div id="prompt-panel-flow" class="prompt-panel hidden">
+            <div class="prompt-panel-title">
+              <span>Cấu hình: Texture Google Flow</span>
+              <span id="flow-prompt-badge" class="badge ok">Đính kèm file</span>
+            </div>
+            <div class="source-tabs" style="margin: 4px 0;">
+              <label class="source-tab"><input id="flow-prompt-mode-attach" name="flow-prompt-mode" type="radio" value="attachment" checked onchange="updatePromptUI()"> 📎 Đính kèm file</label>
+              <label class="source-tab"><input id="flow-prompt-mode-manual" name="flow-prompt-mode" type="radio" value="manual" onchange="updatePromptUI()"> 📝 Nhập thủ công</label>
+            </div>
+            <div id="flow-attachment-box">
+              <label for="flow-prompt-file">Đường dẫn file Master Prompt</label>
+              <div class="row">
+                <input id="flow-prompt-file" type="text" placeholder="prompts/scanned_to_texture_prompt.md">
+                <button id="browse-flow-prompt" type="button" class="ghost">📁 Chọn file</button>
+              </div>
+              <div class="hint">File tài liệu sẽ được áp dụng cho Google Flow khi tạo texture.</div>
+            </div>
+            <div id="flow-manual-box" class="hidden">
+              <label for="flow-prompt-text">Nội dung Master Prompt thủ công</label>
+              <textarea id="flow-prompt-text" class="prompt-textarea" rows="7" placeholder="Nhập nội dung prompt cho Google Flow..." oninput="updatePromptCounts()"></textarea>
+              <div class="prompt-action-bar">
+                <button id="load-default-flow-prompt" type="button" class="ghost btn-sm">🔄 Tải từ file mẫu</button>
+                <span id="flow-prompt-count" class="hint">0 ký tự</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Telegram Notifications Card -->
+        <div class="card">
+          <div class="card-header-flex">
+            <h2>📱 Thông báo Telegram Bot</h2>
+            <label class="check" style="margin:0; padding:4px 8px; font-size:12px; border-color:var(--cyan);"><input id="tele-enabled" type="checkbox" onchange="toggleTelegramInputs()"> Bật thông báo</label>
+          </div>
+          <div id="tele-config-box">
+            <div class="fields" style="grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 0;">
+              <div>
+                <label for="tele-token">Bot Token</label>
+                <input id="tele-token" type="text" placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ">
+              </div>
+              <div>
+                <label for="tele-chat-id">Chat ID</label>
+                <input id="tele-chat-id" type="text" placeholder="123456789 hoặc -100...">
+              </div>
+            </div>
+            <div class="checks" style="margin-top:8px; grid-template-columns: 1fr 1fr;">
+              <label class="check"><input id="tele-quota" type="checkbox" checked> ⚠️ Hết Quota (Kèm giờ reset)</label>
+              <label class="check"><input id="tele-complete" type="checkbox" checked> ✅ Hoàn thành Pipeline</label>
+              <label class="check"><input id="tele-safestop" type="checkbox" checked> 🛑 Captcha / Cần đăng nhập</label>
+              <label class="check"><input id="tele-folder" type="checkbox" checked> 📁 Xong từng thư mục Drive</label>
+            </div>
+            <div class="hint" style="margin-top:6px;">
+              💡 <b>Cách lấy:</b> Chat với <code>@BotFather</code> để tạo bot và lấy Token. Chat với <code>@userinfobot</code> hoặc thêm bot vào nhóm để lấy Chat ID.
+            </div>
+            <div class="actions" style="margin-top:10px; display:flex; justify-content:space-between; align-items:center;">
+              <div style="display:flex; gap:8px;">
+                <button id="tele-test-btn" type="button" class="ghost btn-sm" onclick="testTelegramConnection()">🧪 Gửi tin nhắn thử (Test)</button>
+                <button id="tele-save-btn" type="button" class="ghost btn-sm" onclick="saveTelegramSettings()">💾 Lưu cấu hình</button>
+              </div>
+              <span id="tele-status-msg" class="hint" style="margin:0; font-size:12px;"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>💻 Môi trường & Hệ thống</h2>
+          <div class="env"><span>Project</span><code id="project">-</code><span>Python</span><code id="python">-</code></div>
+          <div class="actions" style="margin-top:12px; justify-content:space-between;">
+            <button class="ghost" type="button" onclick="switchTab('progress')">📊 Xem tiến độ chi tiết →</button>
+            <button id="shutdown-dash" class="ghost" type="button" onclick="requestShutdownApp()">Đóng ứng dụng</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 2: Progress & Fabric SKU Monitor -->
+  <section id="tab-progress" class="tab-content hidden">
+    <div class="card wide">
+      <div class="card-header-flex">
+        <h2>Tiến độ danh sách vải & Thời gian tạo ảnh</h2>
+        <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
+          <button class="ghost btn-sm" type="button" onclick="switchTab('audit')">📁 Bảng quản lý & đối chiếu Drive →</button>
+          <div class="folder-filter-wrap">
+            <label for="folder-filter" style="margin:0; font-weight:600; font-size:12px;">📁 Thư mục:</label>
+            <select id="folder-filter" class="folder-filter-select" onchange="onFolderFilterChange()"></select>
+          </div>
+        </div>
+      </div>
+      <div class="progress-summary">
+        <div class="metric"><strong id="fabric-percent">0%</strong><span>Tiến độ</span></div>
+        <div class="metric"><strong id="fabric-total">0</strong><span>Tổng SKU</span></div>
+        <div class="metric"><strong id="fabric-created" class="ok">0</strong><span>Đã tạo</span><div class="sub">Có đủ Seamless và Swatch</div></div>
+        <div class="metric"><strong id="fabric-pending" class="amber">0</strong><span>Chưa tạo</span><div class="sub">Thiếu Seamless hoặc Swatch</div></div>
+      </div>
+      <div class="fabric-progress"><span id="fabric-progress-bar"></span></div>
+      
+      <!-- Timing Stats Panel -->
+      <div class="timing-summary">
+        <div class="metric highlight" id="card-session-time">
+          <strong id="session-time">00:00:00</strong>
+          <span>Thời gian phiên</span>
+          <div id="session-status-sub" class="sub">Sẵn sàng</div>
+        </div>
+        <div class="metric">
+          <strong id="session-count">0 ảnh</strong>
+          <span>Tạo trong phiên</span>
+          <div id="session-speed-sub" class="sub">-</div>
+        </div>
+        <div class="metric highlight">
+          <strong id="avg-time">--</strong>
+          <span>Trung bình / 1 ảnh</span>
+          <div id="avg-calc-sub" class="sub">Dựa trên lịch sử ChatGPT</div>
+        </div>
+        <div class="metric">
+          <strong id="eta-time">Theo quy tắc</strong>
+          <span>Trạng thái hoàn thiện</span>
+          <div class="sub" id="eta-sub">Cần đủ Seamless (01) và Swatch (02)</div>
+        </div>
+      </div>
+
+      <div class="sku-columns">
+        <div class="sku-box">
+          <div class="sku-title">
+            <div class="sku-title-left"><span class="ok">● Đã tạo</span><strong id="created-count">0</strong></div>
+            <input id="search-created" class="sku-search" type="text" placeholder="Tìm SKU..." oninput="filterSkuCards('created')">
+          </div>
+          <div id="created-list" class="sku-grid"></div>
+        </div>
+        <div class="sku-box">
+          <div class="sku-title">
+            <div class="sku-title-left"><span class="amber">● Chưa tạo</span><strong id="pending-count">0</strong></div>
+            <input id="search-pending" class="sku-search" type="text" placeholder="Tìm SKU..." oninput="filterSkuCards('pending')">
+          </div>
+          <div id="pending-list" class="sku-grid"></div>
+        </div>
+      </div>
+      <div class="progress-rule">
+        <strong>ℹ Quy tắc tính trạng thái</strong>
+        Chỉ những SKU có đủ cả <b>seamless_texture.png</b> và <b>image_1.png</b> mới được tính là “Đã tạo”. Thiếu một trong hai hoặc thiếu cả hai sẽ được tính là “Chưa tạo”.
+      </div>
+      <div id="fabric-paths" class="paths"></div>
+    </div>
+  </section>
+
+  <!-- Persistent live-log popup -->
+  <aside id="tab-logs" class="log-popup hidden" role="dialog" aria-modal="false" aria-labelledby="log-popup-title">
+    <div class="log-popup-card">
+      <div class="log-head">
+        <h2 id="log-popup-title">📜 Nhật ký thời gian thực</h2>
+        <div>
+          <button class="log-popup-close" type="button" onclick="closeLogPopup()" title="Đóng nhật ký" aria-label="Đóng nhật ký">✕</button>
+        </div>
+      </div>
+      <pre id="log"></pre>
+    </div>
+  </aside>
+
+  <!-- TAB 4: Google Drive Management & Fabric Folder Comparison -->
+  <section id="tab-audit" class="tab-content hidden">
+    <div class="card wide">
+      <div class="card-header-flex">
+        <div>
+          <h2>📁 Quản Lý Link Google Drive & Đối Chiếu Thư Mục Vải</h2>
+          <div class="hint">Quản lý liên kết Google Drive cho từng thư mục vải, đối chiếu số lượng ảnh và theo dõi tiến độ tạo thành phẩm</div>
+        </div>
+      </div>
+
+      <!-- Top Metric Cards -->
+      <div class="audit-metrics">
+        <div class="metric">
+          <strong id="dt-total-folders">0</strong>
+          <span>Thư mục vải</span>
+          <div class="metric-sub"><span id="dt-linked-folders" class="ok">0</span> đã gán link • <span id="dt-unlinked-folders" class="amber">0</span> chưa gán</div>
+        </div>
+        <div class="metric">
+          <strong id="dt-total-skus">0</strong>
+          <span>Tổng SKU trên máy</span>
+          <div class="metric-sub">Tất cả mẫu vải đã scan/crop</div>
+        </div>
+        <div class="metric">
+          <strong id="dt-total-created" class="ok">0</strong>
+          <span>Đã tạo thành phẩm</span>
+          <div class="metric-sub">Có Seamless / Swatch</div>
+        </div>
+        <div class="metric">
+          <strong id="dt-total-pending" class="amber">0</strong>
+          <span>Còn thiếu (Pending)</span>
+          <div class="metric-sub">Chưa hoàn thành</div>
+        </div>
+        <div class="metric highlight">
+          <strong id="dt-overall-percent">0%</strong>
+          <span>Tiến độ tổng thể</span>
+          <div class="dt-progress-bar" style="width:100%; margin-top:4px;"><span id="dt-progress-bar-span"></span></div>
+        </div>
+      </div>
+
+      <!-- Action Toolbar -->
+      <div class="drive-table-toolbar">
+        <div class="dt-toolbar-left">
+          <input id="dt-search" type="text" class="sku-search" placeholder="🔍 Tìm kiếm mã thư mục vải..." oninput="filterDriveTable()">
+          <select id="dt-status-filter" onchange="filterDriveTable()">
+            <option value="all">📁 Tất cả trạng thái</option>
+            <option value="completed">✔ Đã hoàn thành (100%)</option>
+            <option value="in_progress">⚡ Đang làm dở</option>
+            <option value="pending">⚠️ Còn thiếu SKU</option>
+            <option value="linked">🔗 Đã có link Drive</option>
+            <option value="unlinked">⚠️ Chưa gán link Drive</option>
+          </select>
+        </div>
+        <div class="dt-toolbar-right">
+          <button type="button" class="ghost btn-sm" onclick="openAddDriveModal()">➕ Thêm / Gán Link Drive</button>
+          <button type="button" class="ghost btn-sm" onclick="openBulkDriveModal()">📋 Ghép nối link hàng loạt</button>
+          <button type="button" class="primary btn-sm" id="btn-audit-all" onclick="auditAllDriveLinks()">🔄 Quét & Đối chiếu tất cả link</button>
+        </div>
+      </div>
+
+      <!-- Main Comparison Table -->
+      <div class="drive-table-wrap">
+        <table class="drive-table">
+          <colgroup>
+            <col style="width:165px"><col style="width:155px"><col style="width:310px"><col style="width:150px"><col style="width:155px">
+            <col style="width:185px"><col style="width:175px"><col style="width:150px"><col style="width:435px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>📁 Thư mục vải</th>
+              <th>● Trạng thái</th>
+              <th>🔗 Link Google Drive</th>
+              <th>📥 Drive (Ảnh)</th>
+              <th>✂️ Đã crop / Raw</th>
+              <th>🎨 Đã tạo thành phẩm</th>
+              <th>📊 Tiến độ</th>
+              <th>⚠️ Còn thiếu</th>
+              <th><div class="dt-actions-heading"><span>⚡ Thao tác</span></div></th>
+            </tr>
+          </thead>
+          <tbody id="drive-table-body">
+            <tr><td colspan="9" style="text-align:center; padding:24px;" class="hint">Đang tải danh sách thư mục vải và dữ liệu Drive...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Loading skeleton / toast -->
+      <div id="audit-loading" class="hidden" style="margin-top:14px; text-align:center; padding:14px; background:#0b1728; border-radius:9px; border:1px dashed var(--line);">
+        <span class="badge running">⏳ Đang kết nối Google Drive và đối chiếu dữ liệu thư mục... Vui lòng đợi trong giây lát</span>
+      </div>
+    </div>
+
+    <!-- Container for detailed audit cards if run from custom url -->
+    <div id="audit-results-container" style="display:flex; flex-direction:column; gap:14px; margin-top:14px;"></div>
+  </section>
+  <section id="tab-quality" class="tab-content hidden" aria-label="Kiểm thử chất lượng output vải">
+    <div class="card">
+      <h2>🔍 Kiểm thử chất lượng output vải</h2>
+      <div class="quality-field">
+        <label for="quality-website">Link trang web mục tiêu</label>
+        <input id="quality-website" type="text" inputmode="url" value="https://dunniotailor.com/3d-custom-outfit/suits.html" aria-describedby="quality-website-hint" readonly>
+        <div id="quality-website-hint" class="hint">Website Dunnio được tải qua proxy nội bộ để hiển thị và nhận ảnh ngay trong app.</div>
+      </div>
+      <div class="quality-field">
+        <label>Folder vải</label>
+        <div class="quality-toolbar">
+          <button id="quality-folder-button" type="button" class="primary" onclick="selectQualityFolder()">📁 Chọn folder vải</button>
+          <span class="hint">Chọn folder cha để hiện các folder con bên dưới. Bấm một folder để xem toàn bộ ảnh bên trong, kể cả các cấp con, theo thứ tự tên và số. Folder chỉ chứa ảnh sẽ hiển thị ảnh ngay.</span>
+        </div>
+        <div id="quality-folders" class="quality-folders" aria-label="Folder đã chọn"></div>
+      </div>
+    </div>
+    <div class="quality-workspace">
+      <div class="card">
+        <div class="card-header-flex"><h2>Ảnh output mẫu vải</h2><button type="button" class="ghost btn-sm" onclick="openQualityRerun()">Tạo lại ảnh</button><span id="quality-count" class="badge" role="status">0 ảnh</span></div>
+        <div id="quality-active-folder" class="hint" role="status"></div>
+        <div class="quality-gallery" tabindex="0" aria-label="Danh sách ảnh mẫu vải có thể cuộn">
+          <div id="quality-empty" class="quality-empty"><strong>Chưa có ảnh mẫu vải</strong><span>Chọn folder vải để xem các ảnh output tại đây.</span></div>
+          <div id="quality-grid" class="quality-grid"></div>
+        </div>
+      </div>
+      <div class="card quality-browser-card">
+        <div class="card-header-flex"><h2>Trang kiểm thử Dunnio Tailor</h2><button type="button" class="ghost btn-sm" onclick="reloadQualityFrame()">Tải lại</button></div>
+        <iframe id="quality-website-frame" class="quality-browser-frame" src="https://dunniotailor.com/3d/suits?key=123456789" title="Dunnio Tailor"></iframe>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header-flex"><h2>Lỗi</h2><button type="button" class="ghost btn-sm" onclick="clearQualityErrors()">Xóa lỗi</button></div>
+      <div id="quality-errors" class="quality-errors" role="log" aria-live="polite">Chưa có lỗi.</div>
+    </div>
+  </section>
+</main>
+
+<dialog id="quality-rerun-dialog" aria-labelledby="quality-rerun-title">
+  <div class="quality-rerun-content">
+    <h2 id="quality-rerun-title">Tạo lại ảnh fail bằng ChatGPT</h2>
+    <div id="quality-rerun-folder" class="hint"></div>
+    <div class="hint">Chạy lại crop, seamless và swatch cho các SKU đã chọn. Kết quả lưu vào output/chatgpt/&lt;nhóm&gt;/&lt;SKU&gt; trong thư mục dữ liệu app, thay thế kết quả cùng tên tại đó. Các ảnh cùng SKU chỉ chạy một lần.</div>
+    <div><button id="quality-rerun-all" type="button" class="ghost btn-sm" onclick="toggleAllQualityRerun()">Chọn tất cả</button></div>
+    <div id="quality-rerun-list"></div>
+    <div id="quality-rerun-status" role="status"></div>
+    <div class="quality-rerun-actions"><button id="quality-rerun-submit" type="button" class="primary" onclick="submitQualityRerun()">Tạo lại ảnh</button><button type="button" onclick="$('quality-rerun-dialog').close()">Thoát</button></div>
+  </div>
+</dialog>
+<!-- Modal Popup Chi tiết SKU -->
+<div id="sku-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeSkuModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-sku-title">Chi tiết SKU: -</h3>
+      <button class="modal-close" onclick="closeSkuModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-previews">
+        <!-- Preview 1: Cropped Texture -->
+        <div class="preview-card">
+          <div class="preview-card-title">
+            <span>1. Cắt nguồn (Cropped)</span>
+            <span id="modal-cropped-dim" class="badge ghost">--</span>
+          </div>
+          <div class="preview-img-box">
+            <img id="modal-cropped-img" src="" alt="Cropped" onerror="this.style.display='none'">
+            <div id="modal-cropped-empty" class="preview-placeholder hidden">Chưa có ảnh cắt</div>
+          </div>
+          <div class="preview-meta">
+            <span>Dung lượng: <code id="modal-cropped-size">--</code></span>
+          </div>
+        </div>
+        <!-- Preview 2: Seamless Texture 2K -->
+        <div class="preview-card">
+          <div class="preview-card-title preview-result-title">
+            <span id="modal-output-dim" class="preview-result-status badge">Đang kiểm tra Seamless 2K...</span>
+          </div>
+          <div class="preview-img-box">
+            <img id="modal-output-img" src="" alt="Seamless Output" onerror="this.style.display='none'; document.getElementById('modal-output-empty').classList.remove('hidden')">
+            <div id="modal-output-empty" class="preview-placeholder hidden">Chưa tạo seamless</div>
+          </div>
+          <div class="preview-meta">
+            <span>Dung lượng: <code id="modal-output-size">--</code></span>
+            <span>Thời gian: <code id="modal-output-time">--</code></span>
+          </div>
+        </div>
+        <!-- Preview 3: Fabric Swatch Studio 4:3 -->
+        <div class="preview-card">
+          <div class="preview-card-title preview-result-title">
+            <span id="modal-fabric-dim" class="preview-result-status badge">Đang kiểm tra Swatch 4:3...</span>
+          </div>
+          <div class="preview-img-box">
+            <img id="modal-fabric-img" src="" alt="Fabric Swatch" onerror="this.style.display='none'; document.getElementById('modal-fabric-empty').classList.remove('hidden')">
+            <div id="modal-fabric-empty" class="preview-placeholder hidden">Chưa tạo swatch vải</div>
+          </div>
+          <div class="preview-meta">
+            <span>Dung lượng: <code id="modal-fabric-size">--</code></span>
+            <span>Thời gian: <code id="modal-fabric-time">--</code></span>
+          </div>
+        </div>
+      </div>
+      <div id="modal-notice" class="modal-notice hidden"></div>
+      
+      <div class="modal-info-table">
+        <div class="label">Thư mục Drive:</div><div id="modal-folder" class="val" style="font-weight:600; color:var(--cyan);">-</div>
+        <div class="label">Lần tạo gần nhất:</div><div id="modal-completed-at" class="val">-</div>
+        <div class="label">Thời lượng tạo:</div><div id="modal-duration" class="val">-</div>
+        <div class="label">Thư mục output:</div><div id="modal-output-path" class="val" style="font-family: Consolas, monospace; font-size: 11px;">-</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <div class="modal-footer-left">
+        <button id="modal-open-folder" class="ghost" type="button">📁 Mở thư mục</button>
+        <button id="modal-view-full" class="ghost" type="button">🔗 Mở ảnh seamless</button>
+        <button id="modal-view-fabric" class="ghost" type="button">🔗 Mở ảnh swatch</button>
+      </div>
+      <div class="modal-footer-right" style="display:flex; gap:6px;">
+        <button id="modal-rerun-algo-sku" class="primary btn-sm" style="background:linear-gradient(135deg, #059669 0%, #047857 100%);" type="button">⚡ Thuật toán (CV)</button>
+        <button id="modal-rerun-sku" class="ghost btn-sm" type="button">🤖 ChatGPT</button>
+        <button id="modal-rerun-flow-sku" class="ghost btn-sm" style="color:var(--cyan); border-color:var(--cyan);" type="button">🌊 Flow</button>
+        <button class="ghost btn-sm" type="button" onclick="closeSkuModal()">Đóng</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal 1: Thêm / Sửa Link Google Drive -->
+<div id="modal-edit-drive" class="modal-backdrop hidden" onclick="if(event.target===this)closeEditDriveModal()">
+  <div class="modal" style="max-width: 540px;">
+    <div class="modal-header">
+      <h3 id="modal-edit-drive-title">🔗 Gán Link Google Drive Cho Thư Mục Vải</h3>
+      <button class="modal-close" onclick="closeEditDriveModal()">&times;</button>
+    </div>
+    <div class="modal-body" style="display:flex; flex-direction:column; gap:12px;">
+      <div>
+        <label for="edit-drive-folder"><b>Thư mục vải (Mã vải)</b></label>
+        <div style="display:flex; gap:8px; margin-top:4px;">
+          <input id="edit-drive-folder" type="text" placeholder="VD: 1013 hoặc WDTC" style="flex:1;">
+          <select id="edit-drive-folder-select" onchange="$('edit-drive-folder').value=this.value" style="background:#081321; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:0 8px;">
+            <option value="">-- Chọn thư mục --</option>
+          </select>
+        </div>
+        <div class="hint">Tên thư mục lưu trữ ảnh kết quả (VD: <code>1013</code>, <code>WDTC</code>, <code>BNO</code>).</div>
+      </div>
+      <div>
+        <label for="edit-drive-url"><b>Link Google Drive Folder</b></label>
+        <input id="edit-drive-url" type="text" placeholder="https://drive.google.com/drive/folders/..." style="width:100%; margin-top:4px;">
+        <div class="hint">Phải là link chia sẻ thư mục Google Drive (chế độ Bất kỳ ai có đường liên kết). Để trống để gỡ link.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="ghost btn-sm" type="button" onclick="closeEditDriveModal()">Hủy</button>
+      <button class="primary btn-sm" type="button" onclick="saveDriveLinkModal()">💾 Lưu liên kết</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal 2: Ghép Nối Link Drive Hàng Loạt -->
+<div id="modal-bulk-drive" class="modal-backdrop hidden" onclick="if(event.target===this)closeBulkDriveModal()">
+  <div class="modal" style="max-width: 640px;">
+    <div class="modal-header">
+      <h3>📋 Nhập Link Google Drive Hàng Loạt & Tự Động Ghép Nối</h3>
+      <button class="modal-close" onclick="closeBulkDriveModal()">&times;</button>
+    </div>
+    <div class="modal-body" style="display:flex; flex-direction:column; gap:12px;">
+      <div class="hint">Dán danh sách các link Google Drive (mỗi dòng 1 link). Hệ thống sẽ tự động quét tiêu đề trên Drive và ghép nối chuẩn xác vào các thư mục vải tương ứng trên máy (ví dụ: link có tên <code>WDTC</code> sẽ tự động gán vào thư mục vải <code>WDTC</code>).</div>
+      <textarea id="bulk-drive-urls" rows="6" style="width:100%; background:#081321; border:1px solid var(--line); color:var(--text); border-radius:9px; padding:10px; font-family:monospace; font-size:12px; outline:none; resize:vertical;" placeholder="https://drive.google.com/drive/folders/1_0JYhVvNeI7nTMfVZJibUSvWc5Rm0JgxO&#10;https://drive.google.com/drive/folders/1TJId1ttIVJm2iqub1ghPNUkCVtvUcjfn"></textarea>
+      
+      <div id="bulk-match-loading" class="hidden" style="text-align:center; padding:12px; background:#0b1728; border-radius:8px; border:1px dashed var(--line);">
+        <span class="badge running">⏳ Đang đọc tiêu đề Drive và tự động ghép nối...</span>
+      </div>
+
+      <div id="bulk-match-results" class="hidden" style="max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; font-size:12px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="ghost btn-sm" type="button" onclick="closeBulkDriveModal()">Đóng</button>
+      <button class="primary btn-sm" id="btn-submit-bulk-match" type="button" onclick="submitBulkDriveMatch()">⚡ Quét & Tự Động Ghép Nối</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal 3: Chi Tiết Đối Chiếu SKU Thư Mục Vải -->
+<div id="modal-folder-audit" class="modal-backdrop hidden" onclick="if(event.target===this)closeFolderSkuAuditModal()">
+  <div class="modal" style="max-width: 780px;">
+    <div class="modal-header">
+      <div>
+        <h3 id="mfa-title">Đối Chiếu SKU: -</h3>
+        <div id="mfa-subtitle" class="hint" style="margin-top:2px;">-</div>
+      </div>
+      <button class="modal-close" onclick="closeFolderSkuAuditModal()">&times;</button>
+    </div>
+    <div class="modal-body" style="display:flex; flex-direction:column; gap:14px;">
+      <!-- Progress Bar & Summary -->
+      <div style="background:#0b1728; padding:12px 14px; border-radius:10px; border:1px solid var(--line);">
+        <div style="display:flex; justify-content:space-between; font-weight:600; font-size:13px; margin-bottom:8px;">
+          <span>Tiến độ tạo ảnh thành phẩm:</span>
+          <span id="mfa-counts">0 / 0</span>
+        </div>
+        <div class="audit-progress-bar"><span id="mfa-progress-bar"></span></div>
+      </div>
+
+      <!-- Action Row & Filters -->
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; gap:6px;">
+          <button id="mfa-filter-all" class="chip-filter-btn active" type="button" onclick="filterFolderAuditChips('all', this)">Tất cả (0)</button>
+          <button id="mfa-filter-done" class="chip-filter-btn" type="button" onclick="filterFolderAuditChips('done', this)">✔ Đã tạo (0)</button>
+          <button id="mfa-filter-missing" class="chip-filter-btn" type="button" onclick="filterFolderAuditChips('missing', this)">⚠️ Chưa tạo (0)</button>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button id="mfa-copy-missing-btn" class="ghost btn-sm" type="button" onclick="copyCurrentFolderMissingSkus()">📋 Copy SKU còn thiếu</button>
+          <button id="mfa-run-missing-btn" class="primary btn-sm" type="button" onclick="sendMissingSkusToPipeline()">▶ Nạp vào chạy tiếp</button>
+          <button id="mfa-rescan-btn" class="ghost btn-sm" type="button" onclick="reScanCurrentFolderAudit()">🔄 Quét lại Drive</button>
+        </div>
+      </div>
+
+      <!-- Loading skeleton -->
+      <div id="mfa-loading" class="hidden" style="text-align:center; padding:24px; background:#0b1728; border-radius:8px; border:1px dashed var(--line);">
+        <span class="badge running">⏳ Đang kết nối Google Drive và quét danh sách SKU...</span>
+      </div>
+
+      <!-- Chips Container -->
+      <div id="mfa-chips-container" class="audit-chips-container" style="max-height:320px; background:#081321; border-radius:9px; border:1px solid var(--line); padding:10px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="ghost btn-sm" type="button" onclick="closeFolderSkuAuditModal()">Đóng</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body></html>

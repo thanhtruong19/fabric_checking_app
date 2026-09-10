@@ -29,6 +29,15 @@ copy config.example.json config.json
 - Chọn thư mục vải hoặc dán link Google Drive ➔ bấm **"Chạy các luồng"**.
 - Bấm **"🔧 Vá lỗi Seamless"** để khử đốm sáng và triệt tiêu mép nối texture.
 
+### Chế độ phát triển có hot reload
+```powershell
+.\run_app_dev.bat
+```
+- Frontend nằm trong `dashboard/app.html`, `dashboard/styles.css` và `dashboard/app.js`;
+  lưu bất kỳ file nào cũng sẽ tự reload cửa sổ app.
+- Khi một file Python thay đổi, backend tự restart và cửa sổ app tự kết nối lại.
+- Không cần build `.exe` trong quá trình phát triển. Chỉ dùng `build_app.bat` khi phát hành.
+
 ### 2. Dòng lệnh (CLI)
 - **Vá viền Seamless & khử lệch sáng (không cần mạng):**
   ```powershell

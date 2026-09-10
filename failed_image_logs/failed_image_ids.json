@@ -88,6 +88,22 @@
       "selected_root": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\NHTH\\NHTH1",
       "relative_path": "seamless_texture.png",
       "marked_at": "2026-09-08T08:59:16.514160+00:00"
+    },
+    "d:\\thanh's coding workspace\\fabrics\\fabrics\\output\\chatgpt\\dehq\\dehq1\\seamless_texture.png": {
+      "image_path": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\DEHQ\\DEHQ1\\seamless_texture.png",
+      "file_name": "seamless_texture.png",
+      "image_directory": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\DEHQ\\DEHQ1",
+      "selected_root": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt",
+      "relative_path": "DEHQ/DEHQ1/seamless_texture.png",
+      "marked_at": "2026-09-10T04:40:21.416522+00:00"
+    },
+    "d:\\thanh's coding workspace\\fabrics\\fabrics\\output\\chatgpt\\dehq\\dehq1\\seamless_texture_chatgpt_raw.png": {
+      "image_path": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\DEHQ\\DEHQ1\\seamless_texture_chatgpt_raw.png",
+      "file_name": "seamless_texture_chatgpt_raw.png",
+      "image_directory": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt\\DEHQ\\DEHQ1",
+      "selected_root": "D:\\Thanh's Coding Workspace\\Fabrics\\fabrics\\output\\chatgpt",
+      "relative_path": "DEHQ/DEHQ1/seamless_texture_chatgpt_raw.png",
+      "marked_at": "2026-09-10T04:40:22.058862+00:00"
     }
   }
 }

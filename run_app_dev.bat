@@ -2,42 +2,17 @@
 setlocal
 cd /d "%~dp0"
 
-echo [DEV MODE] Dang khoi chay VEO3 Auto Pipeline...
-
-if exist "%~dp0dist\dev\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe" (
-    echo Khoi chay ban PyInstaller DEV moi nhat: %~dp0dist\dev\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe
-    start "" "%~dp0dist\dev\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe"
-    exit /b 0
-)
-
-if exist "%~dp0dist\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe" (
-    echo Khoi chay ban DEV moi nhat: %~dp0dist\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe
-    start "" "%~dp0dist\VEO3_AUTO_APP_DEV\VEO3_AUTO_APP_DEV.exe"
-    exit /b 0
-)
-
-if exist "%~dp0dist\VEO3_AUTO_APP_DEV.exe" (
-    echo Khoi chay qua dev launcher: %~dp0dist\VEO3_AUTO_APP_DEV.exe
-    start "" "%~dp0dist\VEO3_AUTO_APP_DEV.exe"
-    exit /b 0
-)
-
-if exist "%~dp0dist\VEO3_AUTO_APP_AUTO_CHROME\VEO3_AUTO_APP_AUTO_CHROME.exe" (
-    echo Khoi chay ban DEV auto Chrome cu: %~dp0dist\VEO3_AUTO_APP_AUTO_CHROME\VEO3_AUTO_APP_AUTO_CHROME.exe
-    start "" "%~dp0dist\VEO3_AUTO_APP_AUTO_CHROME\VEO3_AUTO_APP_AUTO_CHROME.exe"
-    exit /b 0
-)
-
 set "PYTHON_EXE="
 for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python3*") do if exist "%%~fD\python.exe" set "PYTHON_EXE=%%~fD\python.exe"
 if not defined PYTHON_EXE for /f "delims=" %%I in ('where python.exe 2^>nul') do if not defined PYTHON_EXE set "PYTHON_EXE=%%I"
+if not defined PYTHON_EXE if exist "%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" set "PYTHON_EXE=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 
 if defined PYTHON_EXE (
-    echo Khoi chay truc tiep voi Python: %PYTHON_EXE%
-    start "VEO3 AUTO APP - [DEV MODE]" "%PYTHON_EXE%" "%~dp0veo3_auto_app.py"
-    exit /b 0
+    echo [DEV MODE] Backend restart + frontend live reload
+    "%PYTHON_EXE%" "%~dp0dev_server.py"
+    exit /b %ERRORLEVEL%
 )
 
-echo ERROR: Khong tim thay Python hoac file dev de khoi chay.
+echo ERROR: Khong tim thay Python.
 pause
 exit /b 1

@@ -15,7 +15,7 @@ if not defined PYTHON_EXE (
 cd /d "%~dp0"
 echo Using Python: %PYTHON_EXE%
 echo Installing/updating standalone build dependencies...
-"%PYTHON_EXE%" -m pip install --upgrade pyinstaller playwright requests pillow gdown numpy scipy
+"%PYTHON_EXE%" -m pip install --upgrade pyinstaller playwright requests pillow "gdown>=6.2.0" numpy scipy
 if errorlevel 1 goto :error
 
 echo Preparing safe first-run assets...
@@ -34,6 +34,8 @@ echo Building VEO3_AUTO_APP.exe...
   --specpath "%~dp0build" ^
   --add-data "%~dp0build\runtime_assets\config.default.json;runtime_assets" ^
   --add-data "%~dp0prompts;runtime_assets\prompts" ^
+  --add-data "%~dp0dashboard;runtime_assets\dashboard" ^
+  --add-data "%~dp0windows_folder_picker.ps1;runtime_assets" ^
   "%~dp0veo3_auto_app.py"
 if errorlevel 1 goto :error
 

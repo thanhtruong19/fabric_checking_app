@@ -51,14 +51,20 @@ class FakePage:
 
 
 class QualityOutputTests(unittest.TestCase):
+    def frontend_source(self):
+        return "\n".join(
+            (app.frontend_dir() / name).read_text(encoding="utf-8")
+            for name in ("app.html", "styles.css", "app.js")
+        )
+
     def test_quality_gallery_keeps_only_one_selected_image(self):
-        html = app.INDEX_HTML
+        html = self.frontend_source()
         self.assertIn("if (selectedQualityItem === item) return;", html)
         self.assertIn("selectedQualityItem.node.classList.remove('selected')", html)
         self.assertIn("item.node.classList.add('selected')", html)
 
     def test_quality_gallery_switches_child_folders_and_fills_column(self):
-        html = app.INDEX_HTML
+        html = self.frontend_source()
         self.assertIn("qualityFolderGroups = result.folders", html)
         self.assertIn("showQualityFolder(0)", html)
         self.assertIn("grid-template-columns: minmax(0, 1fr)", html)
@@ -77,7 +83,7 @@ class QualityOutputTests(unittest.TestCase):
         self.assertEqual(groups[0]["images"][0]["name"], "a.png")
 
     def test_quality_upload_uses_dunnio_post_message_protocol(self):
-        html = app.INDEX_HTML
+        html = self.frontend_source()
         self.assertIn('src="https://dunniotailor.com/3d/suits?key=123456789"', html)
         self.assertIn("type: 'DUNNIO_ATTACH_IMAGE'", html)
         self.assertIn("message?.type !== 'DUNNIO_ATTACH_IMAGE_RESULT'", html)
@@ -135,18 +141,17 @@ class QualityOutputTests(unittest.TestCase):
             factory.assert_called_once_with("http://127.0.0.1:9333")
             self.assertEqual(result["path"], image.resolve())
 
-    def test_folder_picker_uses_topmost_owner_window(self):
+    def test_folder_picker_uses_native_windows_script(self):
         completed = types.SimpleNamespace(returncode=0, stdout="", stderr="")
         with patch("veo3_auto_app.subprocess.run", return_value=completed) as run:
             self.assertEqual(app.choose_local_folder(), "")
         command = run.call_args.args[0]
-        script = command[command.index("-Command") + 1]
-        self.assertIn("$owner.TopMost=$true", script)
-        self.assertIn("$dialog.ShowDialog($owner)", script)
-        self.assertIn("System.Windows.Forms.OpenFileDialog", script)
-        self.assertNotIn("FolderBrowserDialog", script)
-        self.assertIn("[IO.Directory]::Exists($selected)", script)
-        self.assertIn("[IO.Path]::GetDirectoryName($selected)", script)
+        self.assertIn("-STA", command)
+        self.assertIn("-File", command)
+        self.assertTrue(command[command.index("-File") + 1].endswith("windows_folder_picker.ps1"))
+        script = (Path(__file__).parent / "windows_folder_picker.ps1").read_text(encoding="utf-8")
+        self.assertIn("FileOpenOptions.PickFolders", script)
+        self.assertIn("dialog.SetOkButtonLabel", script)
 
 
 if __name__ == "__main__":

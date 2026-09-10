@@ -5,8 +5,9 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path, PurePosixPath
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from PIL import Image
 from veo3_runtime import get_project_dir, is_embedded_worker
@@ -107,7 +108,7 @@ def run_gdown(arguments, timeout_seconds):
         details = (result.stderr or result.stdout).strip()
         if "No module named gdown" in details:
             details = "gdown is not available in this application build."
-        elif any(
+        elif "--folder" in arguments and any(
             marker in details.casefold()
             for marker in (
                 "failed to retrieve folder contents",
@@ -122,10 +123,7 @@ def run_gdown(arguments, timeout_seconds):
     return result.stdout
 
 
-def list_public_folder(share_url, timeout_seconds):
-    output = run_gdown(
-        [share_url, "--folder", "--json", "--quiet"], timeout_seconds
-    )
+def _parse_public_folder_listing(output):
     try:
         entries = json.loads(output)
     except json.JSONDecodeError as exc:
@@ -145,6 +143,53 @@ def list_public_folder(share_url, timeout_seconds):
             raise RuntimeError(f"Drive returned an unsafe path: {path}")
         normalized.append({"url": url, "path": pure})
     return normalized
+
+
+def _require_unlimited_folder_gdown():
+    """Reject gdown releases that silently stop at Drive's former 50-file limit."""
+    try:
+        import gdown
+
+        version_text = str(getattr(gdown, "__version__", "0"))
+        numbers = tuple(int(value) for value in re.findall(r"\d+", version_text)[:3])
+        version = numbers + (0,) * (3 - len(numbers))
+    except Exception as exc:
+        raise RuntimeError("Không xác định được phiên bản gdown.") from exc
+    if version < (6, 2, 0):
+        raise RuntimeError(
+            f"gdown {version_text} chỉ có thể đọc thiếu file trong folder Drive lớn. "
+            "Hãy chạy setup.bat để nâng cấp lên gdown >= 6.2.0."
+        )
+
+
+def list_public_folder(share_url, timeout_seconds):
+    """List a public folder completely, including entries indexed slightly later."""
+    _require_unlimited_folder_gdown()
+    arguments = [share_url, "--folder", "--json", "--quiet"]
+    listing = _parse_public_folder_listing(run_gdown(arguments, timeout_seconds))
+
+    # Small folders are returned atomically. Large public folders historically stop
+    # at 50 and the unlimited embedded view can briefly grow while Drive indexes it.
+    if len(listing) < 50:
+        return listing
+
+    merged = {(entry["url"], str(entry["path"])): entry for entry in listing}
+    previous_keys = set(merged)
+    stable_rounds = 0
+    for _ in range(4):
+        time.sleep(1)
+        current = _parse_public_folder_listing(run_gdown(arguments, timeout_seconds))
+        current_keys = {(entry["url"], str(entry["path"])) for entry in current}
+        if current_keys == previous_keys:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
+        for entry in current:
+            merged[(entry["url"], str(entry["path"]))] = entry
+        previous_keys = current_keys
+        if stable_rounds >= 2:
+            break
+    return list(merged.values())
 
 
 def strip_listing_root(entries):
@@ -186,6 +231,33 @@ def drive_file_identity(url):
     if path_match:
         return ("id", path_match.group(1))
     return ("url", url)
+
+
+def download_public_drive_file(url, destination, timeout_seconds):
+    """Download a public Drive file directly when gdown cannot resolve its URL."""
+    identity_type, identity = drive_file_identity(url)
+    if identity_type != "id":
+        raise ValueError("Không tìm thấy Google Drive file ID trong URL.")
+    direct_url = (
+        "https://drive.usercontent.google.com/download"
+        f"?id={quote(identity, safe='')}&export=download&confirm=t"
+    )
+    request = urllib.request.Request(
+        direct_url,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        content_type = str(response.headers.get("Content-Type", "")).casefold()
+        if "text/html" in content_type:
+            raise RuntimeError("Google Drive trả về trang HTML thay vì nội dung file.")
+        with open(destination, "wb") as output:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+    if not destination.is_file() or destination.stat().st_size == 0:
+        raise RuntimeError("Google Drive trả về file rỗng.")
 
 
 def select_images(entries, extensions, recursive):
@@ -256,16 +328,25 @@ def download_entry(entry, destination, staging_dir, timeout_seconds, retries):
             if temporary.exists():
                 temporary.unlink()
             try:
-                run_gdown(
-                    [entry["url"], "-O", str(temporary), "--continue"],
-                    timeout_seconds,
-                )
+                direct_error = None
+                try:
+                    download_public_drive_file(entry["url"], temporary, timeout_seconds)
+                except Exception as exc:
+                    direct_error = exc
+                    run_gdown(
+                        [entry["url"], "-O", str(temporary), "--continue", "--no-cookies"],
+                        timeout_seconds,
+                    )
                 image_info = inspect_image(temporary)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(temporary, destination)
                 return image_info
             except Exception as exc:
-                last_error = exc
+                last_error = (
+                    RuntimeError(f"Tải trực tiếp lỗi ({direct_error}); gdown lỗi ({exc})")
+                    if direct_error is not None
+                    else exc
+                )
                 print(f"    Download attempt {attempt}/{retries} failed: {exc}")
         raise RuntimeError(str(last_error))
     finally:

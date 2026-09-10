@@ -14,7 +14,7 @@ if not defined PYTHON_EXE (
 
 echo Using Python: %PYTHON_EXE%
 echo Installing required packages...
-"%PYTHON_EXE%" -m pip install --upgrade playwright requests pillow gdown
+"%PYTHON_EXE%" -m pip install --upgrade playwright requests pillow "gdown>=6.2.0"
 if errorlevel 1 (
     echo ERROR: Package installation failed.
     pause

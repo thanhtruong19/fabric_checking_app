@@ -2,7 +2,13 @@ import unittest
 from pathlib import Path, PurePosixPath
 from unittest.mock import patch
 
-from import_google_drive import DRIVE_NOT_PUBLIC_MESSAGE, run_gdown, select_images
+from import_google_drive import (
+    DRIVE_NOT_PUBLIC_MESSAGE,
+    download_entry,
+    list_public_folder,
+    run_gdown,
+    select_images,
+)
 
 
 class RunGdownErrorTests(unittest.TestCase):
@@ -26,6 +32,86 @@ class RunGdownErrorTests(unittest.TestCase):
         self.assert_not_public_error(
             "'cp932' codec can't encode character '\\xe0': illegal multibyte sequence"
         )
+
+
+class PublicFolderListingTests(unittest.TestCase):
+    @staticmethod
+    def listing(count):
+        return "[" + ",".join(
+            f'{{"url":"https://drive.google.com/uc?id={index}","path":"{index}.jpg"}}'
+            for index in range(count)
+        ) + "]"
+
+    @patch("import_google_drive._require_unlimited_folder_gdown")
+    @patch("import_google_drive.time.sleep")
+    @patch("import_google_drive.run_gdown")
+    def test_large_listing_retries_until_drive_results_are_stable(self, run, _sleep, _version):
+        run.side_effect = [self.listing(50), self.listing(70), self.listing(70), self.listing(70)]
+
+        entries = list_public_folder("https://drive.google.com/drive/folders/test", 30)
+
+        self.assertEqual(70, len(entries))
+        self.assertEqual(4, run.call_count)
+
+    @patch("import_google_drive._require_unlimited_folder_gdown")
+    @patch("import_google_drive.run_gdown")
+    def test_small_listing_needs_only_one_request(self, run, _version):
+        run.return_value = self.listing(12)
+
+        self.assertEqual(12, len(list_public_folder("https://drive.google.com/drive/folders/test", 30)))
+        self.assertEqual(1, run.call_count)
+
+
+class PublicFileDownloadTests(unittest.TestCase):
+    @patch("import_google_drive.inspect_image", return_value={"width": 10, "height": 10, "format": "JPEG"})
+    @patch("import_google_drive.download_public_drive_file")
+    @patch("import_google_drive.run_gdown")
+    def test_direct_download_is_preferred_over_gdown(self, gdown, direct, _inspect):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            destination = root / "result.jpg"
+
+            def create_file(_url, path, _timeout):
+                path.write_bytes(b"image")
+
+            direct.side_effect = create_file
+            download_entry(
+                {"url": "https://drive.google.com/uc?id=test-file", "path": PurePosixPath("test.jpg")},
+                destination,
+                root / "staging",
+                30,
+                1,
+            )
+
+            self.assertEqual(b"image", destination.read_bytes())
+            gdown.assert_not_called()
+
+    @patch("import_google_drive.inspect_image", return_value={"width": 10, "height": 10, "format": "JPEG"})
+    @patch("import_google_drive.download_public_drive_file", side_effect=RuntimeError("direct failed"))
+    @patch("import_google_drive.run_gdown")
+    def test_gdown_remains_as_fallback(self, gdown, _direct, _inspect):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            destination = root / "result.jpg"
+
+            def create_file(_arguments, _timeout):
+                Path(_arguments[_arguments.index("-O") + 1]).write_bytes(b"fallback")
+
+            gdown.side_effect = create_file
+            download_entry(
+                {"url": "https://drive.google.com/uc?id=test-file", "path": PurePosixPath("test.jpg")},
+                destination,
+                root / "staging",
+                30,
+                1,
+            )
+
+            self.assertEqual(b"fallback", destination.read_bytes())
+            self.assertIn("--no-cookies", gdown.call_args.args[0])
 
 
 class SelectImagesTests(unittest.TestCase):
