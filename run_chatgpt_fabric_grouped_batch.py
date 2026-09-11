@@ -58,6 +58,8 @@ LOG_DIR = shared.LOGS_DIR / "chatgpt_fabric_grouped"
 DOWNLOAD_DIR = LOG_DIR / "downloads"
 INVALID_DIR = LOG_DIR / "invalid"
 TIMEOUT_MS = int(SETTINGS.get("timeout_ms", BASE_SETTINGS.get("timeout_ms", 300000)))
+GENERATION_WATCHDOG_MS = int(SETTINGS.get("generation_watchdog_ms", 180000))
+DOWNLOAD_TIMEOUT_MS = int(SETTINGS.get("download_timeout_ms", 90000))
 UPLOAD_TIMEOUT_MS = int(
     SETTINGS.get("upload_timeout_ms", BASE_SETTINGS.get("upload_timeout_ms", 90000))
 )
@@ -364,7 +366,13 @@ def open_fresh_chat(page):
 
 
 def activate_create_image_mode(page):
-    plus_button = page.locator('[data-testid="composer-plus-btn"]')
+    lightbox = page.get_by_test_id("lightbox-new-body-surface")
+    if lightbox.count() and lightbox.first.is_visible():
+        page.keyboard.press("Escape")
+        lightbox.first.wait_for(state="hidden", timeout=5000)
+    plus_button = page.locator(
+        '#thread-bottom [data-testid="composer-plus-btn"]:visible'
+    ).first
     plus_button.wait_for(state="visible", timeout=15000)
     plus_button.click()
     create_image = page.get_by_text(
@@ -432,7 +440,8 @@ def upload_source(page, source_path):
 
 
 def wait_for_generated_image(page, previous_sources, turn_number, images_per_chat):
-    deadline = time.monotonic() + (TIMEOUT_MS / 1000)
+    timeout_ms = min(TIMEOUT_MS, GENERATION_WATCHDOG_MS)
+    deadline = time.monotonic() + (timeout_ms / 1000)
     last_progress = 0
     while time.monotonic() < deadline:
         stop_reason = legacy.check_safe_stop(page)
@@ -452,16 +461,17 @@ def wait_for_generated_image(page, previous_sources, turn_number, images_per_cha
             if candidate is not None:
                 return candidate
 
-        elapsed = int(TIMEOUT_MS / 1000 - max(0, deadline - time.monotonic()))
+        elapsed = int(timeout_ms / 1000 - max(0, deadline - time.monotonic()))
         if elapsed - last_progress >= 30:
+            activity = "Still generating" if is_still_generating else "Waiting for an image result"
             print(
-                f"  [{turn_number}/{images_per_chat}] Still generating fabric swatch "
+                f"  [{turn_number}/{images_per_chat}] {activity} for fabric swatch "
                 f"({elapsed}s elapsed)..."
             )
             last_progress = elapsed
         page.wait_for_timeout(1000)
     raise PlaywrightTimeoutError(
-        f"No new ChatGPT generated fabric image appeared within {TIMEOUT_MS} ms."
+        f"No new ChatGPT generated fabric image appeared within watchdog limit {timeout_ms} ms."
     )
 
 
@@ -488,9 +498,10 @@ def download_and_validate_fabric(page, generated_image, sku, target_path):
     staged_png = target_path.parent / f".{sku}_{stamp}_{os.getpid()}.png"
 
     try:
-        with page.expect_download(timeout=TIMEOUT_MS) as download_info:
-            save_button.click()
-        download_info.value.save_as(str(downloaded_path))
+        download = legacy.trigger_generated_image_download(
+            page, save_button, DOWNLOAD_TIMEOUT_MS
+        )
+        download.save_as(str(downloaded_path))
     finally:
         try:
             if close_button.is_visible():
@@ -741,6 +752,7 @@ def run_batch(args, parser):
             queue = list(selected_files)
             consecutive_failures = 0
             browser_recoveries = 0
+            batch_had_failures = False
 
             while queue:
                 current_batch = queue[:images_per_chat]
@@ -825,6 +837,7 @@ def run_batch(args, parser):
                     if result is True:
                         consecutive_failures = 0
                     else:
+                        batch_had_failures = True
                         consecutive_failures += 1
                         if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                             print(
@@ -843,6 +856,9 @@ def run_batch(args, parser):
                         "between_chats",
                         "between fabric swatch grouped chat sessions",
                     )
+            if batch_had_failures:
+                print("Batch still has pending fabric SKU(s); returning a failure so the pipeline can retry.")
+                raise SystemExit(1)
 
 
 def check_browser():

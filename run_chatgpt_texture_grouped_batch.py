@@ -52,6 +52,7 @@ LOG_DIR = shared.LOGS_DIR / "chatgpt_texture_grouped"
 DOWNLOAD_DIR = LOG_DIR / "downloads"
 INVALID_DIR = LOG_DIR / "invalid"
 TIMEOUT_MS = int(SETTINGS.get("timeout_ms", BASE_SETTINGS.get("timeout_ms", 300000)))
+GENERATION_WATCHDOG_MS = int(SETTINGS.get("generation_watchdog_ms", 180000))
 UPLOAD_TIMEOUT_MS = int(
     SETTINGS.get("upload_timeout_ms", BASE_SETTINGS.get("upload_timeout_ms", 90000))
 )
@@ -306,7 +307,13 @@ def open_fresh_chat(page):
 
 
 def activate_create_image_mode(page):
-    plus_button = page.locator('[data-testid="composer-plus-btn"]')
+    lightbox = page.get_by_test_id("lightbox-new-body-surface")
+    if lightbox.count() and lightbox.first.is_visible():
+        page.keyboard.press("Escape")
+        lightbox.first.wait_for(state="hidden", timeout=5000)
+    plus_button = page.locator(
+        '#thread-bottom [data-testid="composer-plus-btn"]:visible'
+    ).first
     plus_button.wait_for(state="visible", timeout=15000)
     plus_button.click()
     create_image = page.get_by_text("Create image", exact=True).last
@@ -375,7 +382,8 @@ def upload_source(page, source_path):
 
 
 def wait_for_generated_image(page, previous_sources, turn_number, images_per_chat):
-    deadline = time.monotonic() + (TIMEOUT_MS / 1000)
+    timeout_ms = min(TIMEOUT_MS, GENERATION_WATCHDOG_MS)
+    deadline = time.monotonic() + (timeout_ms / 1000)
     last_progress = 0
     while time.monotonic() < deadline:
         stop_reason = legacy.check_safe_stop(page)
@@ -395,16 +403,17 @@ def wait_for_generated_image(page, previous_sources, turn_number, images_per_cha
             if candidate is not None:
                 return candidate
 
-        elapsed = int(TIMEOUT_MS / 1000 - max(0, deadline - time.monotonic()))
+        elapsed = int(timeout_ms / 1000 - max(0, deadline - time.monotonic()))
         if elapsed - last_progress >= 30:
+            activity = "Still generating" if is_still_generating else "Waiting for an image result"
             print(
-                f"  [{turn_number}/{images_per_chat}] Still generating "
+                f"  [{turn_number}/{images_per_chat}] {activity} "
                 f"({elapsed}s elapsed)..."
             )
             last_progress = elapsed
         page.wait_for_timeout(1000)
     raise PlaywrightTimeoutError(
-        f"No new ChatGPT generated image appeared within {TIMEOUT_MS} ms."
+        f"No new ChatGPT generated image appeared within watchdog limit {timeout_ms} ms."
     )
 
 
@@ -728,6 +737,7 @@ def main():
             browser_recoveries = 0
             skip_next_chat_delay = False
             selected_index = 0
+            batch_had_failures = False
             while selected_index < len(selected):
                 sku, source_path, folder = selected[selected_index]
                 if turn_in_chat == 0:
@@ -805,6 +815,7 @@ def main():
                     skip_next_chat_delay = True
                     continue
                 if result is not True:
+                    batch_had_failures = True
                     consecutive_failures += 1
                     turn_in_chat = 0
                     selected_index += 1
@@ -823,6 +834,9 @@ def main():
                     turn_in_chat = 0
                 else:
                     paced_sleep("between_images", "before attaching the next raw texture")
+            if batch_had_failures:
+                print("Batch still has pending texture SKU(s); returning a failure so the pipeline can retry.")
+                raise SystemExit(1)
         finally:
             # Keep this tab open for the swatch step and subsequent SKU workers.
             pass

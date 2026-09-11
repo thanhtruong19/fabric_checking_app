@@ -774,10 +774,10 @@ function payload() {
       enabled: $('tele-enabled').checked,
       bot_token: $('tele-token').value.trim(),
       chat_id: $('tele-chat-id').value.trim(),
-      notify_on_quota: $('tele-quota').checked,
-      notify_on_complete: $('tele-complete').checked,
-      notify_on_safe_stop: $('tele-safestop').checked,
-      notify_on_folder_complete: $('tele-folder').checked
+      notify_on_start: $('tele-start').checked,
+      notify_periodic_progress: $('tele-periodic').checked,
+      notify_on_failure: $('tele-failure').checked,
+      notify_on_complete: $('tele-complete').checked
     },
     flows: {
       import: !local && $('flow-import').checked,
@@ -1394,10 +1394,10 @@ async function fetchState() {
         $('tele-enabled').checked = Boolean(s.telegram.enabled);
         $('tele-token').value = s.telegram.bot_token || '';
         $('tele-chat-id').value = s.telegram.chat_id || '';
-        $('tele-quota').checked = (s.telegram.notify_on_quota !== false);
+        $('tele-start').checked = (s.telegram.notify_on_start !== false);
+        $('tele-periodic').checked = (s.telegram.notify_periodic_progress !== false);
+        $('tele-failure').checked = (s.telegram.notify_on_failure !== false);
         $('tele-complete').checked = (s.telegram.notify_on_complete !== false);
-        $('tele-safestop').checked = (s.telegram.notify_on_safe_stop !== false);
-        $('tele-folder').checked = (s.telegram.notify_on_folder_complete !== false);
         toggleTelegramInputs();
       }
 

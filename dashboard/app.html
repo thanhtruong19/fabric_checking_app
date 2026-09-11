@@ -250,11 +250,12 @@
               </div>
             </div>
             <div class="checks" style="margin-top:8px; grid-template-columns: 1fr 1fr;">
-              <label class="check"><input id="tele-quota" type="checkbox" checked> ⚠️ Hết Quota (Kèm giờ reset)</label>
+              <label class="check"><input id="tele-start" type="checkbox" checked> 🚀 Bắt đầu Pipeline</label>
+              <label class="check"><input id="tele-periodic" type="checkbox" checked> ⏱️ Tiến độ mỗi 30 phút</label>
+              <label class="check"><input id="tele-failure" type="checkbox" checked> 🛑 Lỗi cần can thiệp</label>
               <label class="check"><input id="tele-complete" type="checkbox" checked> ✅ Hoàn thành Pipeline</label>
-              <label class="check"><input id="tele-safestop" type="checkbox" checked> 🛑 Captcha / Cần đăng nhập</label>
-              <label class="check"><input id="tele-folder" type="checkbox" checked> 📁 Xong từng thư mục Drive</label>
             </div>
+            <div class="hint" style="margin-top:6px;">Lỗi chỉ được gửi khi đã hết số lần retry, hoặc khi gặp Captcha, hết phiên đăng nhập hay hết quota.</div>
             <div class="hint" style="margin-top:6px;">
               💡 <b>Cách lấy:</b> Chat với <code>@BotFather</code> để tạo bot và lấy Token. Chat với <code>@userinfobot</code> hoặc thêm bot vào nhóm để lấy Chat ID.
             </div>

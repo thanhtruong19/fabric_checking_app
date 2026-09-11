@@ -1575,7 +1575,15 @@ class PipelineController:
 
         self.telegram_polling_active = False
         self.telegram_poller_thread = None
+        self.telegram_poller_stop = threading.Event()
         self.telegram_offset = 0
+        self.telegram_progress_stop = threading.Event()
+        self.telegram_progress_thread = None
+        self.telegram_noncritical_errors = []
+        self.telegram_queue_folders = []
+        self.telegram_completed_folders = set()
+        self.active_running_step = None
+        self.active_running_sku = None
         self.start_telegram_poller()
 
     @property
@@ -1964,10 +1972,10 @@ class PipelineController:
             "enabled": bool(tele_cfg.get("enabled", False)),
             "bot_token": str(tele_cfg.get("bot_token", "")),
             "chat_id": str(tele_cfg.get("chat_id", "")),
-            "notify_on_quota": bool(tele_cfg.get("notify_on_quota", True)),
             "notify_on_complete": bool(tele_cfg.get("notify_on_complete", True)),
-            "notify_on_safe_stop": bool(tele_cfg.get("notify_on_safe_stop", True)),
-            "notify_on_folder_complete": bool(tele_cfg.get("notify_on_folder_complete", True)),
+            "notify_on_start": bool(tele_cfg.get("notify_on_start", True)),
+            "notify_periodic_progress": bool(tele_cfg.get("notify_periodic_progress", True)),
+            "notify_on_failure": bool(tele_cfg.get("notify_on_failure", True)),
         }
         hidden_drive_folders = config.get("google_drive", {}).get("hidden_folders", [])
         if not isinstance(hidden_drive_folders, list):
@@ -2135,14 +2143,19 @@ class PipelineController:
                 tele_cfg["bot_token"] = str(t_in["bot_token"]).strip()
             if "chat_id" in t_in:
                 tele_cfg["chat_id"] = str(t_in["chat_id"]).strip()
-            if "notify_on_quota" in t_in:
-                tele_cfg["notify_on_quota"] = bool(t_in["notify_on_quota"])
             if "notify_on_complete" in t_in:
                 tele_cfg["notify_on_complete"] = bool(t_in["notify_on_complete"])
-            if "notify_on_safe_stop" in t_in:
-                tele_cfg["notify_on_safe_stop"] = bool(t_in["notify_on_safe_stop"])
-            if "notify_on_folder_complete" in t_in:
-                tele_cfg["notify_on_folder_complete"] = bool(t_in["notify_on_folder_complete"])
+            if "notify_on_start" in t_in:
+                tele_cfg["notify_on_start"] = bool(t_in["notify_on_start"])
+            if "notify_periodic_progress" in t_in:
+                tele_cfg["notify_periodic_progress"] = bool(t_in["notify_periodic_progress"])
+            if "notify_on_failure" in t_in:
+                tele_cfg["notify_on_failure"] = bool(t_in["notify_on_failure"])
+            for legacy_key in (
+                "notify_on_quota", "notify_on_safe_stop", "notify_on_folder_complete",
+                "notify_on_noncritical_error", "include_folder_lists",
+            ):
+                tele_cfg.pop(legacy_key, None)
 
         save_json_atomic(self.config_path, config)
         self.start_telegram_poller()
@@ -2422,6 +2435,19 @@ class PipelineController:
             except Exception:
                 self.session_start_created_count = 0
 
+        self.telegram_progress_stop.clear()
+        self.telegram_noncritical_errors = []
+        queue_folders = [str(item.get("folder", "")).strip() or "Mặc định" for item in queue]
+        self.telegram_queue_folders = list(dict.fromkeys(queue_folders))
+        self.telegram_completed_folders = set()
+        self.notify_telegram(
+            "pipeline_start",
+            folders=queue_folders,
+            current_folder=queue_folders[0] if queue_folders else "Mặc định",
+            started_at=time.strftime("%H:%M:%S"),
+        )
+        self.start_telegram_progress_reporter()
+
         config = load_json(self.config_path)
         app_ui = config.get("app_ui", {})
         auto_retry_enabled = bool(payload.get("auto_retry_enabled", app_ui.get("auto_retry_enabled", True)))
@@ -2463,6 +2489,8 @@ class PipelineController:
                         stopped = True
                         break
                     folder_tag = f" [{folder}]" if folder else ""
+                    self.active_running_step = step.label
+                    self.active_running_sku = step_payload.get("sku")
                     self.set_status(f"{step.label}{folder_tag} ({index}/{len(steps)})")
                     self.append_log(f"\n>>> {step.label}{folder_tag}\n")
                     command = build_step_command(
@@ -2492,6 +2520,7 @@ class PipelineController:
                         return_code = self.process.wait()
                     except Exception as exc:
                         self.append_log(f"[ERROR] Không chạy được bước: {exc}\n")
+                        self.record_telegram_noncritical_error(folder, step.label, str(exc), step_payload.get("sku"))
                         failed = True
                         break
                     finally:
@@ -2540,15 +2569,25 @@ class PipelineController:
 
                     if return_code != 0:
                         self.append_log(f"[ERROR] Bước kết thúc với mã lỗi {return_code}.\n")
+                        self.record_telegram_noncritical_error(
+                            folder, step.label, f"Bước kết thúc với mã lỗi {return_code}", step_payload.get("sku")
+                        )
                         failed = True
                         break
+                    self.clear_telegram_errors(folder, step.label, step_payload.get("sku"))
                     self.append_log(f"<<< Hoàn tất {step.label}{folder_tag}\n")
                     
                 if failed or stopped:
                     break
-                else:
-                    if source_mode == "drive" and folder:
-                        self.notify_telegram("folder_complete", folder=folder)
+                completion_issue = self.pipeline_folder_completion_issue(folder, payload)
+                if completion_issue:
+                    self.append_log(f"[ERROR] {completion_issue}\n")
+                    self.record_telegram_noncritical_error(
+                        folder, "Xác minh kết quả", completion_issue, step_payload.get("sku")
+                    )
+                    failed = True
+                    break
+                self.telegram_completed_folders.add(folder or "Mặc định")
 
             if stopped or self.stop_requested.is_set():
                 break
@@ -2575,6 +2614,7 @@ class PipelineController:
                 retry_attempt += 1
                 if auto_retry_max == 0 or retry_attempt <= auto_retry_max:
                     max_label = str(auto_retry_max) if auto_retry_max > 0 else "∞"
+                    self.set_telegram_error_state("retrying", retry_attempt, auto_retry_max)
                     pending_msg = f" (còn {pending_count} SKU chưa tạo)" if pending_count > 0 else ""
                     self.append_log(
                         f"\n[AUTO-RETRY] Phát hiện gián đoạn{pending_msg}. "
@@ -2595,14 +2635,21 @@ class PipelineController:
                     self.append_log(f"\n[AUTO-RETRY] Khởi động lại pipeline ngay bây giờ (Lần {retry_attempt}/{max_label})...\n")
                     continue
                 else:
+                    self.set_telegram_error_state("failed", auto_retry_max, auto_retry_max)
                     self.append_log(
                         f"\n[AUTO-RETRY] Đã đạt giới hạn số lần thử lại tối đa ({auto_retry_max} lần). Dừng pipeline.\n"
                     )
                     break
             else:
+                if failed:
+                    self.set_telegram_error_state("failed", 0, 0)
                 break
 
+        last_running_folder = self.active_running_folder
+        self.telegram_progress_stop.set()
         self.active_running_folder = None
+        self.active_running_step = None
+        self.active_running_sku = None
         if source_mode == "drive" and queue:
             self.apply_folder_config(queue[0].get("url", ""), queue[0].get("folder", ""))
 
@@ -2620,6 +2667,7 @@ class PipelineController:
             self.append_log("\n[WARNING] Pipeline đã bị dừng bởi người dùng.\n")
         elif failed:
             self.append_log("\n[ERROR] Pipeline dừng do lỗi.\n")
+            self.notify_telegram("pipeline_failed", folder=last_running_folder)
         else:
             self.append_log("\n" + "=" * 72 + "\nPipeline hoàn tất.\n")
             duration_sec = (
@@ -2628,6 +2676,171 @@ class PipelineController:
                 else 0
             )
             self.notify_telegram("pipeline_complete", duration_sec=duration_sec)
+
+    def pipeline_folder_completion_issue(self, folder, payload):
+        """Return a postcondition error when a full-folder run leaves required outputs missing."""
+        if not folder or payload.get("sku") or str(payload.get("limit", "")).strip():
+            return ""
+        flows = payload.get("flows", {})
+        required_field = None
+        required_label = None
+        if flows.get("fabric"):
+            required_field, required_label = "created_count", "swatch hoàn chỉnh"
+        elif flows.get("seamless"):
+            required_field, required_label = "seamless_count", "seamless"
+        elif flows.get("crop"):
+            required_field, required_label = "cropped_count", "ảnh crop"
+        elif flows.get("import"):
+            required_field, required_label = "raw_count", "ảnh Drive"
+        if not required_field:
+            return ""
+        config = load_json(self.config_path)
+        stats = compute_drive_folders_stats(self.project_dir, config, folder, include_unlinked=True)
+        item = next(
+            (value for value in stats.get("folders", []) if value.get("folder_display") == folder),
+            None,
+        )
+        if not item:
+            return f"Không tìm thấy dữ liệu kiểm chứng cho folder {folder}."
+        expected = int(item.get("drive_total") or item.get("total") or 0)
+        completed = int(item.get(required_field, 0))
+        if expected > 0 and completed < expected:
+            return (
+                f"Folder {folder} còn thiếu {expected - completed}/{expected} {required_label}; "
+                "pipeline chưa được phép báo hoàn thành."
+            )
+        return ""
+
+    def record_telegram_noncritical_error(self, folder, stage, message, sku=None):
+        """Keep concise structured errors for folder and periodic Telegram summaries."""
+        entry = {
+            "folder": str(folder or "Mặc định"),
+            "sku": str(sku or "Không xác định"),
+            "stage": str(stage or "Không xác định"),
+            "message": str(message or "Lỗi không xác định")[:300],
+            "state": "detected",
+            "retry_attempt": 0,
+            "retry_max": 0,
+        }
+        key = (entry["folder"], entry["sku"], entry["stage"], entry["message"])
+        with self.lock:
+            existing = {
+                (item["folder"], item["sku"], item["stage"], item["message"])
+                for item in self.telegram_noncritical_errors
+            }
+            if key not in existing:
+                self.telegram_noncritical_errors.append(entry)
+
+    def set_telegram_error_state(self, state, retry_attempt, retry_max):
+        with self.lock:
+            for item in self.telegram_noncritical_errors:
+                item["state"] = str(state)
+                item["retry_attempt"] = int(retry_attempt or 0)
+                item["retry_max"] = int(retry_max or 0)
+
+    def clear_telegram_errors(self, folder, stage, sku=None):
+        """Remove transient errors once the same pipeline step succeeds on retry."""
+        folder = str(folder or "Mặc định")
+        stage = str(stage or "Không xác định")
+        sku = str(sku or "Không xác định")
+        with self.lock:
+            self.telegram_noncritical_errors = [
+                item for item in self.telegram_noncritical_errors
+                if not (item["folder"] == folder and item["stage"] == stage and item["sku"] == sku)
+            ]
+
+    def start_telegram_progress_reporter(self):
+        config = load_json(self.config_path)
+        tele_cfg = config.get("telegram", {})
+        if not (
+            tele_cfg.get("enabled")
+            and tele_cfg.get("notify_periodic_progress", True)
+            and tele_cfg.get("bot_token")
+            and tele_cfg.get("chat_id")
+        ):
+            return
+
+        def report_loop():
+            while not self.telegram_progress_stop.wait(30 * 60):
+                if not self.session_running:
+                    break
+                self.notify_telegram("periodic_progress")
+
+        self.telegram_progress_thread = threading.Thread(target=report_loop, daemon=True)
+        self.telegram_progress_thread.start()
+
+    def telegram_progress_summary(self, config, include_lists=True):
+        stats = compute_drive_folders_stats(self.project_dir, config, self.active_running_folder)
+        folders = stats.get("folders", [])
+        session_folders = list(getattr(self, "telegram_queue_folders", []) or [])
+        completed_set = set(getattr(self, "telegram_completed_folders", set()) or set())
+        active_display = str(self.active_running_folder or ("Mặc định" if self.session_running else ""))
+        if session_folders:
+            session_names = set(session_folders)
+            scoped_folders = [item for item in folders if item.get("folder_display") in session_names]
+            completed = [name for name in session_folders if name in completed_set]
+            waiting = [name for name in session_folders if name not in completed_set and name != active_display]
+            folder_total = len(session_folders)
+        else:
+            scoped_folders = folders
+            completed = [item["folder_display"] for item in folders if item.get("status") == "completed"]
+            waiting = [
+                item["folder_display"] for item in folders
+                if item.get("status") != "completed" and not item.get("is_active")
+            ]
+            folder_total = stats.get("total_folders", 0)
+        total_skus = sum(int(item.get("total", 0)) for item in scoped_folders)
+        created_skus = sum(int(item.get("created_count", 0)) for item in scoped_folders)
+        sku_percent = round(created_skus * 100 / total_skus) if total_skus else 0
+        folder_percent = round(len(completed) * 100 / folder_total) if folder_total else 0
+        lines = [
+            f"📁 <b>Folder:</b> {len(completed)}/{folder_total} ({folder_percent}%)",
+            f"📦 <b>SKU:</b> {created_skus}/{total_skus} ({sku_percent}%)",
+        ]
+        active = next((item for item in scoped_folders if item.get("is_active")), None)
+        if active:
+            lines.append(
+                f"⚡ <b>Đang xử lý:</b> <code>{html.escape(active['folder_display'])}</code> — "
+                f"{active.get('created_count', 0)}/{active.get('total', 0)} SKU ({active.get('percent', 0)}%)"
+            )
+        elif active_display:
+            lines.append(f"⚡ <b>Đang xử lý:</b> <code>{html.escape(active_display)}</code>")
+        if self.active_running_step:
+            step_line = f"⚙️ <b>Công đoạn:</b> {html.escape(str(self.active_running_step))}"
+            if self.active_running_sku:
+                step_line += f" — SKU <code>{html.escape(str(self.active_running_sku))}</code>"
+            lines.append(step_line)
+        if include_lists:
+            lines.append("✅ <b>Đã hoàn thành:</b> " + (", ".join(map(html.escape, completed)) or "Chưa có"))
+            lines.append("⏳ <b>Đang chờ:</b> " + (", ".join(map(html.escape, waiting)) or "Không có"))
+        return "\n".join(lines)
+
+    def telegram_error_summary(self, folder=None):
+        with self.lock:
+            errors = [
+                item for item in self.telegram_noncritical_errors
+                if not folder or item["folder"] == folder
+            ]
+        if not errors:
+            return ""
+        shown = errors[-5:]
+        lines = [f"⚠️ <b>Lỗi hiện tại:</b> {len(errors)}"]
+        for item in shown:
+            state = item.get("state", "detected")
+            if state == "retrying":
+                max_text = str(item.get("retry_max") or "∞")
+                state_text = f"đang retry {item.get('retry_attempt', 0)}/{max_text}"
+            elif state == "failed":
+                state_text = "đã hết retry"
+            else:
+                state_text = "vừa phát hiện"
+            lines.append(
+                f"• <code>{html.escape(item['folder'])}</code> / {html.escape(item['sku'])} / "
+                f"{html.escape(item['stage'])}: {html.escape(item['message'])} ({state_text})"
+            )
+        if len(errors) > len(shown):
+            lines.append(f"• … và {len(errors) - len(shown)} lỗi khác")
+        return "\n".join(lines)
 
     def notify_telegram(self, event_type, **kwargs):
         try:
@@ -2641,7 +2854,25 @@ class PipelineController:
                 return
 
             msg = None
-            if event_type == "quota" and bool(tele_cfg.get("notify_on_quota", True)):
+            include_lists = True
+            if event_type == "pipeline_start" and bool(tele_cfg.get("notify_on_start", True)):
+                folders = kwargs.get("folders", [])
+                current_folder = kwargs.get("current_folder") or (folders[0] if folders else "Mặc định")
+                started_at = kwargs.get("started_at") or time.strftime("%H:%M:%S")
+                msg = (
+                    "🚀 <b>[VEO3 AUTO] BẮT ĐẦU PIPELINE</b>\n\n"
+                    f"📋 <b>Các folder trong hàng đợi:</b> {html.escape(', '.join(folders) or 'Mặc định')}\n"
+                    f"⚡ <b>Folder hiện tại đang được xử lý:</b> "
+                    f"<code>{html.escape(str(current_folder))}</code>\n"
+                    f"🕒 <b>Thời điểm bắt đầu:</b> {html.escape(str(started_at))}"
+                )
+            elif event_type == "periodic_progress" and bool(tele_cfg.get("notify_periodic_progress", True)):
+                summary = self.telegram_progress_summary(config, include_lists)
+                errors = self.telegram_error_summary()
+                msg = "📊 <b>[VEO3 AUTO] TIẾN ĐỘ ĐỊNH KỲ 30 PHÚT</b>\n\n" + summary
+                if errors:
+                    msg += "\n\n" + errors
+            elif event_type == "quota" and bool(tele_cfg.get("notify_on_failure", True)):
                 reset_info = kwargs.get("reset_info") or "Chưa rõ thời gian"
                 msg = (
                     "⚠️ <b>[VEO3 AUTO] HẾT HẠN MỨC (QUOTA) CHATGPT</b>\n\n"
@@ -2649,7 +2880,8 @@ class PipelineController:
                     f"📁 <b>Thư mục hiện tại:</b> <code>{html.escape(str(self.active_running_folder or 'Mặc định'))}</code>\n"
                     "🛑 Tiến trình đã được dừng an toàn để bảo toàn checkpoint."
                 )
-            elif event_type == "safe_stop" and bool(tele_cfg.get("notify_on_safe_stop", True)):
+                msg += "\n\n" + self.telegram_progress_summary(config, True)
+            elif event_type == "safe_stop" and bool(tele_cfg.get("notify_on_failure", True)):
                 reason = kwargs.get("reason", "Yêu cầu can thiệp trình duyệt")
                 msg = (
                     "🛑 <b>[VEO3 AUTO] CẦN CAN THIỆP NGƯỜI DÙNG</b>\n\n"
@@ -2657,24 +2889,28 @@ class PipelineController:
                     f"📁 <b>Thư mục:</b> <code>{html.escape(str(self.active_running_folder or 'Mặc định'))}</code>\n"
                     "👉 Hãy mở Chrome kiểm tra và xử lý (Captcha / Đăng nhập), sau đó bấm chạy lại."
                 )
-            elif event_type == "folder_complete" and bool(tele_cfg.get("notify_on_folder_complete", True)):
-                folder_name = kwargs.get("folder", "") or "Mặc định"
-                fp = fabric_progress(self.project_dir, config, folder_filter=folder_name)
+                msg += "\n\n" + self.telegram_progress_summary(config, True)
+            elif event_type == "pipeline_failed" and bool(tele_cfg.get("notify_on_failure", True)):
+                summary = self.telegram_progress_summary(config, include_lists)
+                errors = self.telegram_error_summary()
                 msg = (
-                    f"📁 <b>[VEO3 AUTO] HOÀN TẤT THƯ MỤC: {html.escape(str(folder_name))}</b>\n\n"
-                    f"✅ <b>Đã tạo:</b> {fp.get('created_count', 0)} / {fp.get('total', 0)} SKU ({fp.get('percent', 0)}%)\n"
-                    f"⏳ <b>Còn lại:</b> {fp.get('pending_count', 0)} SKU"
+                    "🛑 <b>[VEO3 AUTO] PIPELINE DỪNG DO LỖI</b>\n\n"
+                    f"📁 <b>Vị trí:</b> <code>{html.escape(str(kwargs.get('folder') or 'Mặc định'))}</code>\n"
+                    f"{summary}"
                 )
+                if errors:
+                    msg += "\n\n" + errors
             elif event_type == "pipeline_complete" and bool(tele_cfg.get("notify_on_complete", True)):
-                fp = fabric_progress(self.project_dir, config)
                 duration_sec = kwargs.get("duration_sec", 0)
                 dur_text = format_duration(int(duration_sec)) if duration_sec else "--"
                 msg = (
                     "🎉 <b>[VEO3 AUTO] PIPELINE HOÀN TẤT THÀNH CÔNG!</b>\n\n"
-                    f"📊 <b>Tổng số SKU:</b> {fp.get('total', 0)}\n"
-                    f"✅ <b>Hoàn thành:</b> {fp.get('created_count', 0)} SKU ({fp.get('percent', 0)}%)\n"
                     f"⏱️ <b>Tổng thời gian chạy:</b> {dur_text}"
                 )
+                msg += "\n\n" + self.telegram_progress_summary(config, True)
+                errors = self.telegram_error_summary()
+                if errors:
+                    msg += "\n\n" + errors
 
             if msg:
                 threading.Thread(
@@ -2720,10 +2956,9 @@ class PipelineController:
 
     def start_telegram_poller(self):
         with self.lock:
+            self.telegram_poller_stop.set()
             self.telegram_polling_active = False
-            if self.telegram_poller_thread and self.telegram_poller_thread.is_alive():
-                pass # Let it die gracefully by setting active to False
-            
+
             config = load_json(self.config_path)
             tele_cfg = config.get("telegram", {})
             if not bool(tele_cfg.get("enabled")):
@@ -2733,43 +2968,21 @@ class PipelineController:
             chat_id = str(tele_cfg.get("chat_id", "")).strip()
             if not bot_token or not chat_id:
                 return
-                
+
+            stop_event = threading.Event()
+            self.telegram_poller_stop = stop_event
             self.telegram_polling_active = True
             self.telegram_poller_thread = threading.Thread(
                 target=self._telegram_poller_loop,
-                args=(bot_token, chat_id),
+                args=(bot_token, chat_id, stop_event),
                 daemon=True
             )
             self.telegram_poller_thread.start()
 
-    def _telegram_poller_loop(self, bot_token, chat_id):
+    def _telegram_poller_loop(self, bot_token, chat_id, stop_event):
         url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
-        
-        # Optionally send a welcome message with a keyboard menu if starting fresh
-        welcome_msg = "🤖 <b>VEO3 Auto Bot đã sẵn sàng nhận lệnh.</b>"
-        menu_payload = {
-            "chat_id": chat_id,
-            "text": welcome_msg,
-            "parse_mode": "HTML",
-            "reply_markup": {
-                "keyboard": [
-                    [{"text": "📊 Xem tiến độ (Status)"}]
-                ],
-                "resize_keyboard": True
-            }
-        }
-        try:
-            req = urllib.request.Request(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                data=json.dumps(menu_payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=12):
-                pass
-        except Exception:
-            pass
 
-        while self.telegram_polling_active:
+        while not stop_event.is_set():
             try:
                 # Use a long polling timeout of 30 seconds
                 req_url = f"{url}?offset={self.telegram_offset}&timeout=30"
@@ -2799,53 +3012,31 @@ class PipelineController:
                                 
             except urllib.error.URLError:
                 # Network error or timeout, wait before retrying to prevent rapid loop
-                time.sleep(5)
+                stop_event.wait(5)
             except Exception:
-                time.sleep(5)
+                stop_event.wait(5)
+        with self.lock:
+            if self.telegram_poller_stop is stop_event:
+                self.telegram_polling_active = False
                 
     def _send_telegram_status_report(self, bot_token, chat_id):
         try:
             config = load_json(self.config_path)
-            stats = compute_drive_folders_stats(self.project_dir, config, self.active_running_folder)
-            
-            timing = compute_historical_timing_stats(self.project_dir)
             total_time = 0
             if self.session_running and self.session_started_monotonic:
                 total_time = time.monotonic() - self.session_started_monotonic
-            
             time_str = format_duration(int(total_time)) if total_time > 0 else "00:00:00"
             status_text = "Đang chạy ⚡" if self.is_running() else "Nhàn rỗi 💤"
-            
-            active_folder_info = ""
-            queue_info = ""
-            
-            for s in stats.get("folders", []):
-                drive_tag = f" (Drive: {s['drive_total']} ảnh)" if s.get("drive_total") else ""
-                if s["is_active"]:
-                    eta = "--"
-                    if timing["avg_duration_seconds"] > 0 and s["pending_count"] > 0:
-                        eta_sec = s["pending_count"] * timing["avg_duration_seconds"]
-                        eta = format_duration(int(eta_sec))
-                    
-                    active_folder_info = (
-                        f"📁 <b>Thư mục đang chạy:</b> <code>{html.escape(s['folder_display'])}</code>{drive_tag}\n"
-                        f"✅ Đã xong: {s['created_count']}/{s['total']} SKU ({s['percent']}%)\n"
-                        f"⏳ Ước tính còn lại: {eta}\n\n"
-                    )
-                else:
-                    queue_info += f"- <code>{html.escape(s['folder_display'])}</code>{drive_tag}: {s['created_count']}/{s['total']} SKU ({s['percent']}%)\n"
-                    
-            if not queue_info:
-                queue_info = "- (Trống)\n"
-                
+            tele_cfg = config.get("telegram", {})
+            summary = self.telegram_progress_summary(config, True)
             report = (
-                f"📊 <b>BÁO CÁO TIẾN ĐỘ HIỆN TẠI</b>\n"
+                "📊 <b>BÁO CÁO TIẾN ĐỘ HIỆN TẠI</b>\n"
                 f"Trạng thái: {status_text}\n"
-                f"Thời gian phiên: {time_str}\n\n"
-                f"{active_folder_info}"
-                f"📁 <b>Hàng đợi:</b>\n{queue_info}"
+                f"Thời gian phiên: {time_str}\n\n{summary}"
             )
-            
+            errors = self.telegram_error_summary()
+            if errors:
+                report += "\n\n" + errors
             send_telegram_message(bot_token, chat_id, report)
         except Exception as exc:
             self.append_log(f"[Telegram Poller Error] {exc}\n")

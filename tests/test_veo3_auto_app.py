@@ -150,6 +150,25 @@ class VEO3AutoAppTests(unittest.TestCase):
                 self.assertEqual(list(downloads.iterdir()), [])
                 self.assertEqual(list(target.parent.iterdir()), [target])
 
+    def test_chatgpt_download_uses_single_image_menu_when_toolbar_only_opens_menu(self):
+        import run_chatgpt_texture_batch as texture
+
+        page = MagicMock()
+        toolbar_attempt = MagicMock()
+        toolbar_attempt.__enter__.side_effect = texture.PlaywrightTimeoutError("no direct download")
+        menu_attempt = MagicMock()
+        expected_download = MagicMock()
+        menu_attempt.__enter__.return_value.value = expected_download
+        page.expect_download.side_effect = [toolbar_attempt, menu_attempt]
+        menu_choice = MagicMock()
+        page.get_by_text.return_value.last = menu_choice
+
+        result = texture.trigger_generated_image_download(page, MagicMock(), 90000)
+
+        self.assertIs(result, expected_download)
+        menu_choice.wait_for.assert_called_once_with(state="visible", timeout=15000)
+        menu_choice.click.assert_called_once()
+
     def test_quality_rerun_uses_selected_skus_and_isolated_external_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -1049,6 +1068,7 @@ class VEO3AutoAppTests(unittest.TestCase):
             controller = app.PipelineController()
             controller.project_dir = root
             controller.python_exe = Path(app.sys.executable)
+            controller.notify_telegram = Mock()
 
             payload = {
                 "source_mode": "local",
@@ -1075,6 +1095,9 @@ class VEO3AutoAppTests(unittest.TestCase):
             self.assertEqual(controller.status, "Hoàn thành")
             self.assertIn("[AUTO-RETRY]", controller.log_text)
             self.assertIn("RETRY_SUCCESS", controller.log_text)
+            events = [call.args[0] for call in controller.notify_telegram.call_args_list]
+            self.assertEqual(events, ["pipeline_start", "pipeline_complete"])
+            self.assertEqual(controller.telegram_noncritical_errors, [])
 
     def test_auto_retry_stops_when_max_attempts_exceeded(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1101,6 +1124,7 @@ class VEO3AutoAppTests(unittest.TestCase):
             controller = app.PipelineController()
             controller.project_dir = root
             controller.python_exe = Path(app.sys.executable)
+            controller.notify_telegram = Mock()
 
             payload = {
                 "source_mode": "local",
@@ -1126,6 +1150,9 @@ class VEO3AutoAppTests(unittest.TestCase):
             self.assertFalse(controller.is_running())
             self.assertEqual(controller.status, "Lỗi")
             self.assertIn("Đã đạt giới hạn số lần thử lại tối đa", controller.log_text)
+            events = [call.args[0] for call in controller.notify_telegram.call_args_list]
+            self.assertEqual(events, ["pipeline_start", "pipeline_failed"])
+            self.assertTrue(all(item["state"] == "failed" for item in controller.telegram_noncritical_errors))
 
     def test_auto_retry_stops_on_user_stop_request(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1532,10 +1559,10 @@ class VEO3AutoAppTests(unittest.TestCase):
                     "enabled": True,
                     "bot_token": "123:ABC",
                     "chat_id": "99999",
-                    "notify_on_quota": True,
                     "notify_on_complete": False,
-                    "notify_on_safe_stop": True,
-                    "notify_on_folder_complete": True,
+                    "notify_on_start": True,
+                    "notify_periodic_progress": True,
+                    "notify_on_failure": True,
                 }
             }
             controller.save_settings(payload)
@@ -1546,6 +1573,9 @@ class VEO3AutoAppTests(unittest.TestCase):
             self.assertEqual(tele.get("bot_token"), "123:ABC")
             self.assertEqual(tele.get("chat_id"), "99999")
             self.assertFalse(tele.get("notify_on_complete"))
+            self.assertTrue(tele.get("notify_on_start"))
+            self.assertTrue(tele.get("notify_periodic_progress"))
+            self.assertTrue(tele.get("notify_on_failure"))
 
             st = controller.state()
             self.assertTrue(st["telegram"]["enabled"])
@@ -1579,7 +1609,131 @@ class VEO3AutoAppTests(unittest.TestCase):
                 text = args[2]
                 self.assertIn("BÁO CÁO TIẾN ĐỘ HIỆN TẠI", text)
                 self.assertIn("Đang chạy ⚡", text)
-                self.assertIn("Thư mục đang chạy:</b> <code>TEST_FOLDER</code>", text)
+                self.assertIn("Đang xử lý:</b> <code>TEST_FOLDER</code>", text)
+                self.assertIn("Đã hoàn thành:", text)
+                self.assertIn("Đang chờ:", text)
+
+    def test_telegram_progress_counts_only_folders_in_current_queue(self):
+        controller = app.PipelineController.__new__(app.PipelineController)
+        controller.project_dir = Path(".").resolve()
+        controller.lock = threading.RLock()
+        controller.session_running = False
+        controller.active_running_folder = None
+        controller.active_running_step = None
+        controller.active_running_sku = None
+        controller.telegram_queue_folders = ["DEHQ"]
+        controller.telegram_completed_folders = {"DEHQ"}
+        stats = {
+            "folders": [
+                {"folder_display": "DEHQ", "status": "completed", "total": 3, "created_count": 3, "is_active": False},
+                {"folder_display": "OTHER", "status": "not_started", "total": 10, "created_count": 0, "is_active": False},
+            ],
+            "total_folders": 2,
+            "total_skus": 13,
+            "total_created": 3,
+            "overall_percent": 23,
+        }
+
+        with patch.object(app, "compute_drive_folders_stats", return_value=stats):
+            summary = controller.telegram_progress_summary({}, True)
+
+        self.assertIn("Folder:</b> 1/1 (100%)", summary)
+        self.assertIn("SKU:</b> 3/3 (100%)", summary)
+        self.assertNotIn("13", summary)
+
+    def test_pipeline_folder_postcondition_rejects_missing_output(self):
+        controller = app.PipelineController.__new__(app.PipelineController)
+        controller.project_dir = Path(".").resolve()
+        stats = {
+            "folders": [{
+                "folder_display": "test1",
+                "drive_total": 2,
+                "total": 2,
+                "created_count": 1,
+                "seamless_count": 1,
+                "cropped_count": 2,
+                "raw_count": 2,
+            }]
+        }
+        payload = {
+            "limit": "",
+            "sku": "",
+            "flows": {"import": True, "crop": True, "seamless": True, "fabric": True},
+        }
+
+        with patch.object(app, "load_json", return_value={}), patch.object(
+            app, "compute_drive_folders_stats", return_value=stats
+        ):
+            issue = controller.pipeline_folder_completion_issue("test1", payload)
+
+        self.assertIn("còn thiếu 1/2 swatch hoàn chỉnh", issue)
+        stats["folders"][0]["created_count"] = 2
+        with patch.object(app, "load_json", return_value={}), patch.object(
+            app, "compute_drive_folders_stats", return_value=stats
+        ):
+            self.assertEqual(controller.pipeline_folder_completion_issue("test1", payload), "")
+
+    def test_telegram_pipeline_start_message_contains_queue_current_folder_and_time(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config.json").write_text(json.dumps({
+                "telegram": {
+                    "enabled": True,
+                    "bot_token": "123:ABC",
+                    "chat_id": "99999",
+                    "notify_on_start": True,
+                }
+            }), encoding="utf-8")
+            controller = app.PipelineController.__new__(app.PipelineController)
+            controller.project_dir = root
+
+            with patch.object(app.threading, "Thread") as thread:
+                controller.notify_telegram(
+                    "pipeline_start",
+                    folders=["test", "test1"],
+                    current_folder="test",
+                    started_at="16:20:45",
+                )
+
+            message = thread.call_args.kwargs["args"][2]
+            self.assertIn("Các folder trong hàng đợi:</b> test, test1", message)
+            self.assertIn("Folder hiện tại đang được xử lý:</b> <code>test</code>", message)
+            self.assertIn("Thời điểm bắt đầu:</b> 16:20:45", message)
+            self.assertNotIn("10/09/2026", message)
+            self.assertNotIn("Tổng folder", message)
+
+    def test_telegram_poller_starts_silently_and_replaces_previous_instance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config.json").write_text(json.dumps({
+                "telegram": {
+                    "enabled": True,
+                    "bot_token": "123:ABC",
+                    "chat_id": "99999",
+                }
+            }), encoding="utf-8")
+            controller = app.PipelineController.__new__(app.PipelineController)
+            controller.project_dir = root
+            controller.lock = threading.RLock()
+            controller.telegram_polling_active = True
+            controller.telegram_poller_thread = None
+            previous_stop = threading.Event()
+            controller.telegram_poller_stop = previous_stop
+            controller.telegram_offset = 0
+
+            with patch.object(threading, "Thread") as thread:
+                controller.start_telegram_poller()
+
+            self.assertTrue(previous_stop.is_set())
+            thread.return_value.start.assert_called_once()
+            poller_args = thread.call_args.kwargs["args"]
+            self.assertEqual(poller_args[:2], ("123:ABC", "99999"))
+            self.assertIs(poller_args[2], controller.telegram_poller_stop)
+
+            controller.telegram_poller_stop.set()
+            with patch("urllib.request.urlopen") as urlopen:
+                controller._telegram_poller_loop("123:ABC", "99999", controller.telegram_poller_stop)
+            urlopen.assert_not_called()
 
     def test_extract_base_folder_code(self):
         self.assertEqual(app.extract_base_folder_code("1013 (Làm trước)"), "1013")

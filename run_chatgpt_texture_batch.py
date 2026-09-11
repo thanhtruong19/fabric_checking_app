@@ -532,9 +532,8 @@ def download_and_validate(page, generated_image, sku, target_path):
     target_path.parent.mkdir(parents=True, exist_ok=True)
     staged_png = target_path.parent / f".{sku}_{stamp}_{os.getpid()}.png"
     try:
-        with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as download_info:
-            save_button.click()
-        download_info.value.save_as(str(downloaded_path))
+        download = trigger_generated_image_download(page, save_button, DOWNLOAD_TIMEOUT_MS)
+        download.save_as(str(downloaded_path))
     finally:
         try:
             if close_button.is_visible():
@@ -561,6 +560,25 @@ def download_and_validate(page, generated_image, sku, target_path):
             staged_png.unlink()
 
     return output_info
+
+
+def trigger_generated_image_download(page, download_button, timeout_ms):
+    """Handle both the old direct-download button and the new two-step download menu."""
+    try:
+        with page.expect_download(timeout=4000) as download_info:
+            download_button.click()
+        return download_info.value
+    except PlaywrightTimeoutError:
+        print("  Download button opened a menu; selecting 'Download image'.")
+
+    menu_choice = page.get_by_text(
+        re.compile(r"^(Download image|Tải hình ảnh|Tải ảnh)$", re.IGNORECASE),
+        exact=True,
+    ).last
+    menu_choice.wait_for(state="visible", timeout=15000)
+    with page.expect_download(timeout=timeout_ms) as download_info:
+        menu_choice.click()
+    return download_info.value
 
 
 def recover_previous_download(sku, target_path):
