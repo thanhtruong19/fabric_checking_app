@@ -7,6 +7,7 @@ let lastCreatedList = [];
 let lastPendingList = [];
 let driveUrlsQueue = [];
 let driveFoldersStats = [];
+let hiddenDriveFolders = [];
 let currentSelectedFolder = 'all';
 let driveFolderSearch = '';
 let driveFolderPage = 1;
@@ -31,7 +32,8 @@ function renderDriveFolders(statsList, queueList) {
   container.replaceChildren();
 
   // Combine queue with stats
-  const items = (statsList && statsList.length > 0) ? statsList : queueList.map(q => ({
+  const hiddenFolderKeys = new Set(hiddenDriveFolders.map(folder => String(folder || '').trim().toLocaleLowerCase('vi')));
+  const items = ((statsList && statsList.length > 0) ? statsList : queueList.map(q => ({
     folder: q.folder || '',
     folder_display: q.folder || 'Mặc định',
     url: q.url || '',
@@ -42,7 +44,7 @@ function renderDriveFolders(statsList, queueList) {
     pending_count: 0,
     percent: 0,
     is_active: false
-  }));
+  }))).filter(item => !hiddenFolderKeys.has(String(item.folder || '').trim().toLocaleLowerCase('vi')));
 
   const sortedItems = [...items].sort((a, b) => {
     const aModified = Number(a.modified_ts || Date.parse(a.modified_at || '') || 0);
@@ -186,7 +188,7 @@ function renderDriveFolders(statsList, queueList) {
     delBtn.type = 'button';
     delBtn.className = 'danger btn-sm';
     delBtn.innerHTML = '✕';
-    delBtn.title = 'Xóa link Drive này';
+    delBtn.title = 'Gỡ thư mục khỏi danh sách quản lý';
     delBtn.onclick = () => removeDriveFolder(item.folder, item.url);
 
     actions.appendChild(runChatGptBtn);
@@ -285,10 +287,9 @@ async function openFolderDirectory(folder) {
 
 async function removeDriveFolder(folder, url) {
   const name = folder || 'Mặc định';
-  if (!confirm(`Bạn có chắc muốn xóa thư mục/link Drive "${name}"?\n(Dữ liệu tải về và kết quả của thư mục này cũng sẽ được dọn dẹp).`)) return;
+  if (!confirm(`Gỡ thư mục "${name}" khỏi danh sách quản lý Google Drive?\n(Thư mục gốc trên Google Drive và toàn bộ dữ liệu trên máy vẫn được giữ nguyên).`)) return;
   try {
-    await api('/api/delete-drive-folder', { folder: folder || '', url: url || '', delete_files: true });
-    driveUrlsQueue = driveUrlsQueue.filter(item => !(item.folder === folder && item.url === url));
+    await api('/api/delete-drive-folder', { folder: folder || '', url: url || '' });
     await fetchState();
   } catch (e) {
     toastError(e);
@@ -312,9 +313,27 @@ $('add-drive-btn').onclick = async () => {
 
   // Check if duplicate
   const folderId = driveFolderId(url);
-  const exists = driveUrlsQueue.some(i => driveFolderId(i.url) === folderId);
-  if (exists) {
+  const existingItem = driveUrlsQueue.find(i => driveFolderId(i.url) === folderId);
+  const requestedFolder = folder || (existingItem && existingItem.folder) || '';
+  const requestedFolderKey = requestedFolder.trim().toLocaleLowerCase('vi');
+  const isHidden = hiddenDriveFolders.some(item => String(item || '').trim().toLocaleLowerCase('vi') === requestedFolderKey);
+  const existingFolderKey = String((existingItem && existingItem.folder) || '').trim().toLocaleLowerCase('vi');
+  if (existingItem && existingFolderKey === requestedFolderKey && !isHidden) {
     alert('Folder ID này đã có trong danh sách. Không thể thêm bản ghi trùng.');
+    return;
+  }
+  if (requestedFolder) {
+    try {
+      await api('/api/save-drive-link', { folder: requestedFolder, url });
+      driveFolderSearch = '';
+      driveFolderPage = 1;
+      $('drive-folder-search').value = '';
+      urlInput.value = '';
+      folderInput.value = '';
+      await fetchState();
+    } catch (e) {
+      toastError(e);
+    }
     return;
   }
 
@@ -1397,6 +1416,7 @@ async function fetchState() {
     }
 
     driveFoldersStats = (s.drive_folders_stats && s.drive_folders_stats.folders) || [];
+    hiddenDriveFolders = Array.isArray(s.hidden_drive_folders) ? s.hidden_drive_folders : [];
     renderDriveFolders(driveFoldersStats, driveUrlsQueue);
     renderDriveManagementSection(s.drive_folders_stats);
     updateFolderFilterSelect(driveFoldersStats);

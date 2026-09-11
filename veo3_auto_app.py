@@ -495,6 +495,14 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
 
     drive = config.get("google_drive", {})
     configured_urls = deduplicate_drive_items(drive.get("urls", []))
+    hidden_folder_values = drive.get("hidden_folders", [])
+    if not isinstance(hidden_folder_values, list):
+        hidden_folder_values = []
+    hidden_folders = {
+        str(folder).strip().replace("/", "\\").casefold()
+        for folder in hidden_folder_values
+        if str(folder).strip()
+    }
     if not configured_urls and drive.get("share_url"):
         configured_urls = [{"url": drive.get("share_url"), "folder": ""}]
 
@@ -557,6 +565,8 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
 
     for folder_name, url in folders_map.items():
         if not folder_name:
+            continue
+        if folder_name.strip().replace("/", "\\").casefold() in hidden_folders:
             continue
         folder_display = folder_name
         raw_dir = raw_root / folder_name
@@ -1959,6 +1969,9 @@ class PipelineController:
             "notify_on_safe_stop": bool(tele_cfg.get("notify_on_safe_stop", True)),
             "notify_on_folder_complete": bool(tele_cfg.get("notify_on_folder_complete", True)),
         }
+        hidden_drive_folders = config.get("google_drive", {}).get("hidden_folders", [])
+        if not isinstance(hidden_drive_folders, list):
+            hidden_drive_folders = []
 
         out_root = resolve_project_path(self.project_dir, "output")
         output_children = [d.name for d in out_root.iterdir() if d.is_dir()] if safe_is_dir(out_root) else ["chatgpt"]
@@ -1969,6 +1982,9 @@ class PipelineController:
                 "python_exe": str(self.python_exe) if self.python_exe else None,
                 "drive_url": drive_url,
                 "drive_urls": drive_urls,
+                "hidden_drive_folders": [
+                    folder for folder in hidden_drive_folders if isinstance(folder, str)
+                ],
                 "drive_folders_stats": folders_stats,
                 "drive_sync_recent": folders_stats.get("recent_sync_history", []),
                 "output_subdirectories": output_children,
@@ -3056,75 +3072,33 @@ class PipelineController:
     def delete_drive_folder(self, payload):
         folder = str(payload.get("folder", "")).strip().replace("/", "\\")
         url = str(payload.get("url", "")).strip()
-        delete_files = bool(payload.get("delete_files", True))
 
         config = load_json(self.config_path)
         drive = config.setdefault("google_drive", {})
         urls = drive.get("urls", [])
-        
-        new_urls = []
-        for item in urls:
-            item_folder = str(item.get("folder", "")).strip().replace("/", "\\")
-            item_url = str(item.get("url", "")).strip()
-            if folder and item_folder.lower() == folder.lower():
-                continue
-            if url and item_url == url and not folder:
-                continue
-            new_urls.append(item)
-            
-        drive["urls"] = new_urls
-        drive["share_url"] = new_urls[0]["url"] if new_urls else ""
-        drive["enabled"] = bool(new_urls)
+
+        # Local output folders are auto-discovered when building the management
+        # list. Remember dismissed folder names without deleting their Drive
+        # links, sync history, or local data.
+        if folder:
+            hidden_folders = drive.get("hidden_folders", [])
+            if not isinstance(hidden_folders, list):
+                hidden_folders = []
+            folder_key = folder.casefold()
+            if not any(
+                str(item).strip().replace("/", "\\").casefold() == folder_key
+                for item in hidden_folders
+            ):
+                hidden_folders.append(folder)
+            drive["hidden_folders"] = hidden_folders
+
         save_json_atomic(self.config_path, config)
 
-        # Folder cards are assembled from both config.json and the persisted
-        # Drive sync snapshot.  Remove the latter as well, otherwise fetchState()
-        # immediately recreates a deleted card as "Chưa tải ảnh".
-        if folder:
-            sync_path = resolve_project_path(
-                self.project_dir, drive.get("sync_status_file", "status_drive_sync.json")
-            )
-            if safe_is_file(sync_path):
-                sync_data = load_json(sync_path)
-                if isinstance(sync_data, dict):
-                    folder_key = folder.casefold()
-                    sync_folders = sync_data.get("folders")
-                    if isinstance(sync_folders, dict):
-                        sync_data["folders"] = {
-                            key: value
-                            for key, value in sync_folders.items()
-                            if str(key).strip().replace("/", "\\").casefold() != folder_key
-                        }
-                    sync_history = sync_data.get("history")
-                    if isinstance(sync_history, list):
-                        sync_data["history"] = [
-                            item
-                            for item in sync_history
-                            if not isinstance(item, dict)
-                            or str(item.get("folder", "")).strip().replace("/", "\\").casefold()
-                            != folder_key
-                        ]
-                    save_json_atomic(sync_path, sync_data)
-
-        delete_errors = []
-        if delete_files and folder and folder not in {".", "..", "/", "\\"}:
-            for base_name in ("textures_raw", "textures_cropped", "textures", "output/chatgpt", "output/chatgpt_project_fabric"):
-                target_dir = resolve_project_path(self.project_dir, base_name) / folder
-                if safe_is_dir(target_dir):
-                    try:
-                        shutil.rmtree(target_dir)
-                    except Exception as exc:
-                        delete_errors.append(f"{target_dir}: {exc}")
-                        self.append_log(f"[WARNING] Không xóa được thư mục {target_dir}: {exc}\n")
-
-        if delete_errors:
-            raise RuntimeError(
-                "Đã xóa link và trạng thái Drive nhưng không thể xóa hết dữ liệu local:\n"
-                + "\n".join(delete_errors)
-            )
-
-        self.append_log(f"Đã xóa thư mục/link Drive [{folder or url}].\n")
-        return {"ok": True, "drive_urls": new_urls}
+        self.append_log(
+            f"Đã gỡ thư mục Drive [{folder or url}] khỏi danh sách quản lý; "
+            "dữ liệu local và thư mục gốc trên Google Drive được giữ nguyên.\n"
+        )
+        return {"ok": True, "drive_urls": urls, "hidden_folders": drive.get("hidden_folders", [])}
 
     def dismiss_quota_alert(self):
         with self.lock:
@@ -3199,15 +3173,29 @@ class PipelineController:
         urls = drive.get("urls", [])
         if not isinstance(urls, list):
             urls = []
+
+        # Explicitly assigning/editing a link restores a previously hidden card.
+        hidden_folders = drive.get("hidden_folders", [])
+        if isinstance(hidden_folders, list):
+            folder_key = folder.replace("/", "\\").casefold()
+            drive["hidden_folders"] = [
+                item for item in hidden_folders
+                if str(item).strip().replace("/", "\\").casefold() != folder_key
+            ]
         
         found = False
         new_urls = []
+        new_folder_id = drive_folder_id(url) if url else ""
         for item in urls:
             item_folder = str(item.get("folder", "")).strip()
             if item_folder.casefold() == folder.casefold():
                 if url:
                     new_urls.append({"url": url, "folder": folder, "modified_at": modified_at})
                 found = True
+            elif new_folder_id and drive_folder_id(item.get("url", "")) == new_folder_id:
+                # A Drive folder can belong to only one managed local folder.
+                # Reassign it to the folder explicitly entered by the user.
+                continue
             else:
                 new_urls.append(item)
         if not found and url:

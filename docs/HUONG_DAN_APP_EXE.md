@@ -78,7 +78,7 @@ Tab **4. Quản lý Drive & So sánh vải** cho phép quản lý danh bạ link
      - **Ảnh đã tạo:** Số lượng ảnh Seamless (01) và ảnh Swatch (02) đã hoàn thành.
      - **Tiến độ (%):** Thanh tiến độ màu trực quan theo tỷ lệ hoàn thành.
      - **Còn thiếu:** Số lượng SKU còn thiếu so với nguồn.
-     - **Hành động:** Xem bảng kiểm kê chi tiết SKU (`Kiểm kê SKU`), Chạy riêng thư mục với ChatGPT (`▶ Chạy ChatGPT`), Mở thư mục trên máy (`📂 Mở folder`), Xóa link/thư mục (`🗑️`).
+     - **Hành động:** Xem bảng kiểm kê chi tiết SKU (`Kiểm kê SKU`), Chạy riêng thư mục với ChatGPT (`▶ Chạy ChatGPT`), Mở thư mục trên máy (`📂 Mở folder`), hoặc ẩn thư mục khỏi danh sách quản lý (`✕`). Thao tác ẩn vẫn giữ nguyên link, lịch sử đồng bộ, thư mục gốc trên Google Drive và dữ liệu đã tải/tạo trên máy.
 
 5. **Kiểm tra chi tiết SKU từng thư mục:**
    - Bấm nút `Kiểm kê SKU` để mở modal chi tiết:

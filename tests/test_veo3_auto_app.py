@@ -1351,7 +1351,7 @@ class VEO3AutoAppTests(unittest.TestCase):
             flow_text = app.get_default_prompt_text(root, "flow_texture")
             self.assertEqual(flow_text, "GOOGLE FLOW PROMPT")
 
-    def test_delete_drive_folder_removes_from_config_and_disk(self):
+    def test_delete_drive_folder_removes_from_management_but_keeps_disk_data(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config = {
@@ -1385,29 +1385,80 @@ class VEO3AutoAppTests(unittest.TestCase):
             controller = app.PipelineController()
             controller.project_dir = root
 
+            # Legacy clients may still send delete_files=True. Removing a Drive
+            # entry must never delete downloaded files or generated outputs.
             res = controller.delete_drive_folder({"folder": "ABC", "delete_files": True})
             self.assertTrue(res["ok"])
 
             # Verify config updated
             saved = json.loads((root / "config.json").read_text(encoding="utf-8"))
             saved_urls = saved["google_drive"]["urls"]
-            self.assertEqual(len(saved_urls), 1)
-            self.assertEqual(saved_urls[0]["folder"], "XYZ")
+            self.assertEqual(len(saved_urls), 2)
+            self.assertEqual([item["folder"] for item in saved_urls], ["ABC", "XYZ"])
+            self.assertEqual(saved["google_drive"]["hidden_folders"], ["ABC"])
 
             # Verify stale sync state cannot recreate the deleted folder card.
             sync_data = json.loads((root / "status_drive_sync.json").read_text(encoding="utf-8"))
-            self.assertNotIn("ABC", sync_data["folders"])
+            self.assertIn("ABC", sync_data["folders"])
             self.assertIn("XYZ", sync_data["folders"])
-            self.assertEqual([item["folder"] for item in sync_data["history"]], ["XYZ"])
+            self.assertEqual([item["folder"] for item in sync_data["history"]], ["ABC", "XYZ"])
 
-            # Verify disk directory removed
-            self.assertFalse(raw_abc.exists())
+            # Verify local data is preserved.
+            self.assertTrue(raw_abc.exists())
+            self.assertEqual((raw_abc / "test.jpg").read_bytes(), b"test-bytes")
 
             # Verify compute_drive_folders_stats only returns XYZ
             stats = app.compute_drive_folders_stats(root, saved)
             folders = [f["folder"] for f in stats["folders"]]
             self.assertIn("XYZ", folders)
             self.assertNotIn("ABC", folders)
+
+    def test_save_drive_link_restores_hidden_management_card(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config.json").write_text(json.dumps({
+                "google_drive": {
+                    "urls": [{
+                        "url": "https://drive.google.com/drive/folders/ABC",
+                        "folder": "ABC",
+                    }],
+                    "hidden_folders": ["ABC"],
+                }
+            }), encoding="utf-8")
+            controller = app.PipelineController()
+            controller.project_dir = root
+
+            controller.save_drive_link({
+                "folder": "ABC",
+                "url": "https://drive.google.com/drive/folders/ABC",
+            })
+
+            saved = json.loads((root / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["google_drive"]["hidden_folders"], [])
+            stats = app.compute_drive_folders_stats(root, saved)
+            self.assertEqual([item["folder"] for item in stats["folders"]], ["ABC"])
+
+    def test_save_drive_link_reassigns_duplicate_drive_id_to_requested_folder(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            url = "https://drive.google.com/drive/folders/SAME_ID?usp=sharing"
+            (root / "config.json").write_text(json.dumps({
+                "google_drive": {
+                    "urls": [{"url": url, "folder": "OLD"}],
+                    "hidden_folders": ["OLD"],
+                }
+            }), encoding="utf-8")
+            controller = app.PipelineController()
+            controller.project_dir = root
+
+            controller.save_drive_link({"folder": "NEW", "url": url})
+
+            saved = json.loads((root / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(saved["google_drive"]["urls"]), 1)
+            self.assertEqual(saved["google_drive"]["urls"][0]["folder"], "NEW")
+            stats = app.compute_drive_folders_stats(root, saved)
+            self.assertEqual(stats["folders"][0]["folder"], "NEW")
+            self.assertEqual(stats["folders"][0]["url"], url)
 
     def test_extract_chatgpt_quota_info_formats(self):
         # 1. English card with absolute time
