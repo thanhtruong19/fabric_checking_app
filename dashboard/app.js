@@ -8,19 +8,12 @@ let lastPendingList = [];
 let driveUrlsQueue = [];
 let driveFoldersStats = [];
 let hiddenDriveFolders = [];
+let activePipelineFolders = [];
+let pipelineIsRunning = false;
 let currentSelectedFolder = 'all';
 let driveFolderSearch = '';
 let driveFolderPage = 1;
 const DRIVE_FOLDERS_PER_PAGE = 4;
-
-function fillDriveFolderSlots(container, usedSlots) {
-  for (let index = usedSlots; index < DRIVE_FOLDERS_PER_PAGE; index += 1) {
-    const placeholder = document.createElement('div');
-    placeholder.className = 'drive-folder-item drive-folder-placeholder';
-    placeholder.setAttribute('aria-hidden', 'true');
-    container.appendChild(placeholder);
-  }
-}
 
 function driveFolderId(url) {
   const match = String(url || '').match(/\/folders\/([^/?#]+)/i);
@@ -30,9 +23,11 @@ function driveFolderId(url) {
 function renderDriveFolders(statsList, queueList) {
   const container = $('drive-folders-list');
   container.replaceChildren();
+  container.classList.toggle('pipeline-empty', !pipelineIsRunning);
 
   // Combine queue with stats
   const hiddenFolderKeys = new Set(hiddenDriveFolders.map(folder => String(folder || '').trim().toLocaleLowerCase('vi')));
+  const activePipelineKeys = new Set(activePipelineFolders.map(folder => String(folder || '').trim().toLocaleLowerCase('vi')));
   const items = ((statsList && statsList.length > 0) ? statsList : queueList.map(q => ({
     folder: q.folder || '',
     folder_display: q.folder || 'Mặc định',
@@ -44,7 +39,10 @@ function renderDriveFolders(statsList, queueList) {
     pending_count: 0,
     percent: 0,
     is_active: false
-  }))).filter(item => !hiddenFolderKeys.has(String(item.folder || '').trim().toLocaleLowerCase('vi')));
+  }))).filter(item => {
+    const folderKey = String(item.folder_display || item.folder || 'Mặc định').trim().toLocaleLowerCase('vi');
+    return pipelineIsRunning && activePipelineKeys.has(folderKey) && !hiddenFolderKeys.has(folderKey);
+  });
 
   const sortedItems = [...items].sort((a, b) => {
     const aModified = Number(a.modified_ts || Date.parse(a.modified_at || '') || 0);
@@ -75,9 +73,10 @@ function renderDriveFolders(statsList, queueList) {
     empty.style.textAlign = 'center';
     empty.textContent = items.length
       ? `Không tìm thấy thư mục khớp với “${driveFolderSearch.trim()}”.`
-      : 'Chưa có link Google Drive nào. Hãy thêm link bên dưới.';
+      : (pipelineIsRunning
+        ? 'Không còn thư mục nào đang chờ xử lý trong pipeline.'
+        : 'Chưa có pipeline nào đang chạy.');
     container.appendChild(empty);
-    fillDriveFolderSlots(container, 1);
     return;
   }
 
@@ -201,7 +200,6 @@ function renderDriveFolders(statsList, queueList) {
 
     container.appendChild(card);
   });
-  fillDriveFolderSlots(container, pageItems.length);
 }
 
 $('drive-folder-search').addEventListener('input', event => {
@@ -707,14 +705,49 @@ function switchTab(tabId) {
 
   $('tab-dashboard').classList.toggle('hidden', tabId !== 'dashboard');
   $('tab-progress').classList.toggle('hidden', tabId !== 'progress');
-  $('tab-audit').classList.toggle('hidden', tabId !== 'audit');
   $('tab-quality').classList.toggle('hidden', tabId !== 'quality');
 
   $('nav-tab-dashboard').classList.toggle('active', tabId === 'dashboard');
   $('nav-tab-progress').classList.toggle('active', tabId === 'progress');
-  $('nav-tab-audit').classList.toggle('active', tabId === 'audit');
   $('nav-tab-quality').classList.toggle('active', tabId === 'quality');
 }
+
+function openDriveManagementModal() {
+  $('drive-management-modal').classList.remove('hidden');
+  $('nav-drive-management').classList.add('active');
+  $('nav-drive-management').setAttribute('aria-expanded', 'true');
+}
+
+function closeDriveManagementModal() {
+  $('drive-management-modal').classList.add('hidden');
+  $('nav-drive-management').classList.remove('active');
+  $('nav-drive-management').setAttribute('aria-expanded', 'false');
+}
+
+function openSettingsModal() {
+  const modal = $('settings-modal');
+  // Keep the settings available from every main tab. It starts beside the
+  // dashboard markup for readability, then moves outside the tab container.
+  if (modal.parentElement !== document.body) document.body.appendChild(modal);
+  modal.classList.remove('hidden');
+  $('nav-settings').classList.add('active');
+  $('nav-settings').setAttribute('aria-expanded', 'true');
+}
+
+function closeSettingsModal() {
+  $('settings-modal').classList.add('hidden');
+  $('nav-settings').classList.remove('active');
+  $('nav-settings').setAttribute('aria-expanded', 'false');
+}
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('drive-management-modal').classList.contains('hidden')) {
+    closeDriveManagementModal();
+  }
+  if (event.key === 'Escape' && !$('settings-modal').classList.contains('hidden')) {
+    closeSettingsModal();
+  }
+});
 
 function openLogPopup() {
   $('tab-logs').classList.remove('hidden');
@@ -1407,7 +1440,7 @@ async function fetchState() {
       // Restore active tab from previous session
       try {
         const savedTab = sessionStorage.getItem('veo3_active_tab');
-        if (savedTab && ['dashboard', 'progress', 'logs', 'audit', 'quality'].includes(savedTab)) {
+        if (savedTab && ['dashboard', 'progress', 'quality'].includes(savedTab)) {
           switchTab(savedTab);
         }
       } catch(e) {}
@@ -1417,6 +1450,8 @@ async function fetchState() {
 
     driveFoldersStats = (s.drive_folders_stats && s.drive_folders_stats.folders) || [];
     hiddenDriveFolders = Array.isArray(s.hidden_drive_folders) ? s.hidden_drive_folders : [];
+    activePipelineFolders = Array.isArray(s.active_pipeline_folders) ? s.active_pipeline_folders : [];
+    pipelineIsRunning = Boolean(s.running);
     renderDriveFolders(driveFoldersStats, driveUrlsQueue);
     renderDriveManagementSection(s.drive_folders_stats);
     updateFolderFilterSelect(driveFoldersStats);
@@ -1767,6 +1802,7 @@ async function addAuditedFolderToPipeline(url, folder) {
 
 let currentAuditFolderData = null;
 let currentDriveTableFolders = [];
+let editDriveOriginalFolder = '';
 
 function renderDriveManagementSection(statsData) {
   if (!statsData) return;
@@ -1784,28 +1820,6 @@ function renderDriveManagementSection(statsData) {
   if ($('dt-progress-bar-span')) {
     $('dt-progress-bar-span').style.width = (statsData.overall_percent || 0) + '%';
   }
-  if ($('nav-audit-badge')) {
-    $('nav-audit-badge').textContent = `${statsData.linked_folders || 0}/${statsData.total_folders || 0}`;
-  }
-
-  // 2. Populate folder select in modal
-  const sel = $('edit-drive-folder-select');
-  if (sel) {
-    const curVal = sel.value;
-    sel.replaceChildren();
-    const defOpt = document.createElement('option');
-    defOpt.value = '';
-    defOpt.textContent = '-- Chọn thư mục có sẵn --';
-    sel.appendChild(defOpt);
-    folders.forEach(f => {
-      const opt = document.createElement('option');
-      opt.value = f.folder;
-      opt.textContent = `${f.folder} (${f.total} SKU${f.url ? ' - Đã có link' : ''})`;
-      sel.appendChild(opt);
-    });
-    if (curVal) sel.value = curVal;
-  }
-
   // 3. Render Table rows
   filterDriveTable();
 }
@@ -1960,10 +1974,15 @@ function openAddDriveModal() {
 }
 
 function openEditDriveModal(folder, url) {
+  editDriveOriginalFolder = String(folder || '').trim();
   $('edit-drive-folder').value = folder || '';
   $('edit-drive-url').value = url || '';
-  const sel = $('edit-drive-folder-select');
-  if (sel) sel.value = folder || '';
+  $('edit-drive-sku').value = $('sku').value || '';
+  $('edit-drive-limit').value = $('limit').value || '';
+  $('edit-drive-perchat').value = $('perchat').value || '10';
+  $('edit-drive-message').className = 'edit-drive-message hidden';
+  $('edit-drive-message').textContent = '';
+  validateEditDriveDuplicates();
   $('modal-edit-drive-title').textContent = folder ? `🔗 Sửa Link Drive Cho Thư Mục "${folder}"` : '➕ Thêm / Gán Link Google Drive Mới';
   $('modal-edit-drive').classList.remove('hidden');
 }
@@ -1972,20 +1991,111 @@ function closeEditDriveModal() {
   $('modal-edit-drive').classList.add('hidden');
 }
 
+// A text-selection drag can begin inside the dialog and end on its backdrop.
+// Only close when the pointer press itself also began on the backdrop.
+{
+  const modal = $('modal-edit-drive');
+  let pointerStartedOnBackdrop = false;
+  modal.addEventListener('pointerdown', (event) => {
+    pointerStartedOnBackdrop = event.target === modal;
+  });
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal && pointerStartedOnBackdrop) closeEditDriveModal();
+    pointerStartedOnBackdrop = false;
+  });
+  modal.addEventListener('pointercancel', () => {
+    pointerStartedOnBackdrop = false;
+  });
+}
+
+function setEditDriveFieldError(inputId, errorId, message) {
+  const input = $(inputId);
+  const error = $(errorId);
+  input.classList.toggle('input-invalid', Boolean(message));
+  input.setAttribute('aria-invalid', message ? 'true' : 'false');
+  error.textContent = message || '';
+  error.classList.toggle('hidden', !message);
+}
+
+function validateEditDriveDuplicates() {
+  const folder = $('edit-drive-folder').value.trim();
+  const url = $('edit-drive-url').value.trim();
+  const folderKey = folder.toLocaleLowerCase('vi');
+  const originalKey = editDriveOriginalFolder.toLocaleLowerCase('vi');
+  const allFolders = [
+    ...currentDriveTableFolders,
+    ...driveUrlsQueue.map(item => ({ folder: item.folder || '', url: item.url || '' }))
+  ];
+
+  const folderConflict = folderKey && allFolders.find(item => {
+    const itemKey = String(item.folder || '').trim().toLocaleLowerCase('vi');
+    return itemKey === folderKey && itemKey !== originalKey;
+  });
+  const urlId = driveFolderId(url);
+  const urlConflict = urlId && allFolders.find(item => {
+    const itemFolderKey = String(item.folder || '').trim().toLocaleLowerCase('vi');
+    return driveFolderId(item.url || '') === urlId && itemFolderKey !== originalKey;
+  });
+
+  setEditDriveFieldError(
+    'edit-drive-folder',
+    'edit-drive-folder-error',
+    folderConflict ? `Tên thư mục đã tồn tại: ${folderConflict.folder}.` : ''
+  );
+  setEditDriveFieldError(
+    'edit-drive-url',
+    'edit-drive-url-error',
+    urlConflict ? `Link Drive này đã được gán cho thư mục ${urlConflict.folder || 'khác'}.` : ''
+  );
+  return !folderConflict && !urlConflict;
+}
+
 async function saveDriveLinkModal() {
   const folder = $('edit-drive-folder').value.trim();
   const url = $('edit-drive-url').value.trim();
-  if (!folder) {
-    alert('Vui lòng nhập hoặc chọn tên thư mục vải.');
-    $('edit-drive-folder').focus();
+  const sku = $('edit-drive-sku').value.trim();
+  const limit = $('edit-drive-limit').value.trim();
+  const imagesPerChat = Number($('edit-drive-perchat').value || 10);
+  const saveButton = $('save-drive-link-btn');
+  const message = $('edit-drive-message');
+  const showError = (text, input) => {
+    message.textContent = text;
+    message.className = 'edit-drive-message';
+    if (input) input.focus();
+  };
+  if (!validateEditDriveDuplicates()) {
+    showError('Vui lòng xử lý các trường đang bị trùng trước khi lưu.');
     return;
   }
+  if (!folder) {
+    showError('Vui lòng nhập tên thư mục vải mới.', $('edit-drive-folder'));
+    return;
+  }
+  if (!url || !url.includes('drive.google.com') || !url.includes('/folders/')) {
+    showError('Link đang trống hoặc không đúng định dạng thư mục Google Drive.', $('edit-drive-url'));
+    return;
+  }
+  if (!Number.isInteger(imagesPerChat) || imagesPerChat < 1 || imagesPerChat > 20) {
+    showError('Ảnh mỗi chat phải là số nguyên từ 1 đến 20.', $('edit-drive-perchat'));
+    return;
+  }
+  message.className = 'edit-drive-message hidden';
+  message.textContent = '';
+  saveButton.disabled = true;
+  saveButton.textContent = '⏳ Đang lưu...';
   try {
-    await api('/api/save-drive-link', { folder, url });
-    closeEditDriveModal();
+    await api('/api/save-drive-link', { folder, url, original_folder: editDriveOriginalFolder });
+    $('sku').value = sku;
+    $('limit').value = limit;
+    $('perchat').value = String(imagesPerChat);
     await fetchState();
+    saveButton.textContent = '✓ Đã lưu';
+    closeEditDriveModal();
   } catch (err) {
-    alert('Lỗi lưu link Drive: ' + (err.message || err));
+    showError('Không thể lưu link Drive: ' + (err.message || err));
+  } finally {
+    saveButton.disabled = false;
+    saveButton.textContent = '💾 Lưu liên kết';
   }
 }
 

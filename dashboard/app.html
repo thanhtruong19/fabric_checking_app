@@ -22,19 +22,27 @@
       📊 <span>2. Tiến độ & Danh sách vải</span>
       <span id="nav-progress-badge" class="tab-nav-badge">0%</span>
     </button>
-    <button id="nav-tab-audit" class="tab-nav-btn" type="button" onclick="switchTab('audit')">
-      📁 <span>3. Quản lý Drive & So sánh vải</span>
-      <span id="nav-audit-badge" class="tab-nav-badge">0</span>
-    </button>
     <button id="nav-tab-quality" class="tab-nav-btn" type="button" onclick="switchTab('quality')">
-      🔍 <span>4. Test vải</span>
+      🔍 <span>3. Test vải</span>
     </button>
   </nav>
+
+  <button id="nav-drive-management" class="floating-log-nav floating-drive-nav" type="button"
+          onclick="openDriveManagementModal()" title="Mở Quản lý Drive & So sánh vải"
+          aria-label="Mở Quản lý Drive & So sánh vải" aria-expanded="false">
+    📁 <span class="floating-log-label">Quản lý Drive &amp; So sánh vải</span>
+  </button>
 
   <button id="nav-tab-logs" class="floating-log-nav" type="button"
           onclick="openLogPopup()" title="Mở Nhật ký thời gian thực"
           aria-label="Mở Nhật ký thời gian thực" aria-expanded="false">
     📜 <span class="floating-log-label">Nhật ký thời gian thực</span>
+  </button>
+
+  <button id="nav-settings" class="floating-log-nav floating-settings-nav" type="button"
+          onclick="openSettingsModal()" title="Mở Cài đặt"
+          aria-label="Mở Cài đặt" aria-expanded="false">
+    ⚙️ <span class="floating-log-label">Cài đặt</span>
   </button>
 
   <!-- Quota Exhausted Alert Banner -->
@@ -49,9 +57,9 @@
 
   <!-- TAB 1: Dashboard & Settings -->
   <section id="tab-dashboard" class="tab-content">
-    <div class="grid">
+    <div class="grid dashboard-control-grid">
       <!-- Left Column: Source & Control -->
-      <div style="display:flex; flex-direction:column; gap:14px;">
+      <div class="dashboard-primary-panels">
         <div class="card">
           <h2>📁 Nguồn ảnh vải</h2>
           <div class="source-tabs">
@@ -71,7 +79,7 @@
               <button id="drive-page-next" type="button" class="ghost btn-sm">Sau →</button>
             </div>
             
-            <div style="margin-top: 10px;">
+            <div class="hidden" aria-hidden="true" style="margin-top: 10px;">
               <label>Thêm Link Drive mới</label>
               <div class="drive-add-row">
                 <input id="new-drive-url" type="text" placeholder="https://drive.google.com/drive/folders/...">
@@ -79,14 +87,14 @@
                 <button id="add-drive-btn" type="button" class="ghost">+ Thêm</button>
               </div>
             </div>
-            <div class="hint">Mỗi link Drive sẽ được tải và xuất kết quả vào thư mục con mang tên tương ứng.</div>
+            <div class="hint hidden" aria-hidden="true">Mỗi link Drive sẽ được tải và xuất kết quả vào thư mục con mang tên tương ứng.</div>
           </div>
           <div id="local-source" class="hidden">
             <label for="local-folder">Thư mục chứa ảnh vải trên máy</label>
             <div class="row"><input id="local-folder" type="text" readonly placeholder="Chưa chọn thư mục"><button id="browse" type="button">Chọn thư mục</button></div>
             <div class="hint">Khi dùng local, bước Import Drive sẽ được bỏ qua. Ảnh gốc không bị sửa hoặc xóa.</div>
           </div>
-          <div class="fields">
+          <div class="fields hidden" aria-hidden="true">
             <div><label for="sku">SKU (để trống = tất cả)</label><input id="sku" type="text" placeholder="SP1M29"></div>
             <div><label for="limit">Giới hạn</label><input id="limit" type="number" min="1" placeholder="Tất cả"></div>
             <div><label for="perchat">Ảnh mỗi chat</label><input id="perchat" type="number" min="1" max="20" value="10"></div>
@@ -126,8 +134,15 @@
         </div>
       </div>
 
-      <!-- Right Column: Prompt Settings & Environment -->
-      <div style="display:flex; flex-direction:column; gap:14px;">
+      <!-- Settings modal: Prompt, Telegram, Environment -->
+      <aside id="settings-modal" class="drive-management-modal hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" onclick="if(event.target===this)closeSettingsModal()">
+        <div class="drive-management-dialog settings-dialog">
+          <div class="modal-header">
+            <h3 id="settings-modal-title">⚙️ Cài đặt</h3>
+            <button class="modal-close" type="button" onclick="closeSettingsModal()" aria-label="Đóng cài đặt">&times;</button>
+          </div>
+          <div class="drive-management-body">
+      <div class="settings-card-grid">
         <div class="card">
           <div class="card-header-flex">
             <h2>⚙️ Cấu hình Prompt</h2>
@@ -278,6 +293,9 @@
           </div>
         </div>
       </div>
+          </div>
+        </div>
+      </aside>
     </div>
   </section>
 
@@ -287,7 +305,7 @@
       <div class="card-header-flex">
         <h2>Tiến độ danh sách vải & Thời gian tạo ảnh</h2>
         <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
-          <button class="ghost btn-sm" type="button" onclick="switchTab('audit')">📁 Bảng quản lý & đối chiếu Drive →</button>
+          <button class="ghost btn-sm" type="button" onclick="openDriveManagementModal()">📁 Bảng quản lý & đối chiếu Drive →</button>
           <div class="folder-filter-wrap">
             <label for="folder-filter" style="margin:0; font-weight:600; font-size:12px;">📁 Thư mục:</label>
             <select id="folder-filter" class="folder-filter-select" onchange="onFolderFilterChange()"></select>
@@ -363,9 +381,15 @@
     </div>
   </aside>
 
-  <!-- TAB 4: Google Drive Management & Fabric Folder Comparison -->
-  <section id="tab-audit" class="tab-content hidden">
-    <div class="card wide">
+  <!-- Google Drive Management & Fabric Folder Comparison Modal -->
+  <aside id="drive-management-modal" class="drive-management-modal hidden" role="dialog" aria-modal="true" aria-labelledby="drive-management-title" onclick="if(event.target===this)closeDriveManagementModal()">
+    <div class="drive-management-dialog">
+      <div class="modal-header">
+        <h3 id="drive-management-title">📁 Quản lý Drive & So sánh vải</h3>
+        <button class="modal-close" type="button" onclick="closeDriveManagementModal()" aria-label="Đóng quản lý Drive">&times;</button>
+      </div>
+      <div class="drive-management-body">
+      <div class="card wide drive-management-card">
       <div class="card-header-flex">
         <div>
           <h2>📁 Quản Lý Link Google Drive & Đối Chiếu Thư Mục Vải</h2>
@@ -416,8 +440,8 @@
           </select>
         </div>
         <div class="dt-toolbar-right">
-          <button type="button" class="ghost btn-sm" onclick="openAddDriveModal()">➕ Thêm / Gán Link Drive</button>
-          <button type="button" class="ghost btn-sm" onclick="openBulkDriveModal()">📋 Ghép nối link hàng loạt</button>
+          <button type="button" class="primary btn-sm" onclick="openAddDriveModal()">➕ Thêm / Gán Link Drive</button>
+          <button type="button" class="primary btn-sm" onclick="openBulkDriveModal()">📋 Ghép nối link hàng loạt</button>
           <button type="button" class="primary btn-sm" id="btn-audit-all" onclick="auditAllDriveLinks()">🔄 Quét & Đối chiếu tất cả link</button>
         </div>
       </div>
@@ -455,8 +479,10 @@
     </div>
 
     <!-- Container for detailed audit cards if run from custom url -->
-    <div id="audit-results-container" style="display:flex; flex-direction:column; gap:14px; margin-top:14px;"></div>
-  </section>
+      <div id="audit-results-container" style="display:flex; flex-direction:column; gap:14px; margin-top:14px;"></div>
+      </div>
+    </div>
+  </aside>
   <section id="tab-quality" class="tab-content hidden" aria-label="Kiểm thử chất lượng output vải">
     <div class="card">
       <h2>🔍 Kiểm thử chất lượng output vải</h2>
@@ -584,7 +610,7 @@
 </div>
 
 <!-- Modal 1: Thêm / Sửa Link Google Drive -->
-<div id="modal-edit-drive" class="modal-backdrop hidden" onclick="if(event.target===this)closeEditDriveModal()">
+<div id="modal-edit-drive" class="modal-backdrop hidden">
   <div class="modal" style="max-width: 540px;">
     <div class="modal-header">
       <h3 id="modal-edit-drive-title">🔗 Gán Link Google Drive Cho Thư Mục Vải</h3>
@@ -593,23 +619,35 @@
     <div class="modal-body" style="display:flex; flex-direction:column; gap:12px;">
       <div>
         <label for="edit-drive-folder"><b>Thư mục vải (Mã vải)</b></label>
-        <div style="display:flex; gap:8px; margin-top:4px;">
-          <input id="edit-drive-folder" type="text" placeholder="VD: 1013 hoặc WDTC" style="flex:1;">
-          <select id="edit-drive-folder-select" onchange="$('edit-drive-folder').value=this.value" style="background:#081321; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:0 8px;">
-            <option value="">-- Chọn thư mục --</option>
-          </select>
-        </div>
-        <div class="hint">Tên thư mục lưu trữ ảnh kết quả (VD: <code>1013</code>, <code>WDTC</code>, <code>BNO</code>).</div>
+        <input id="edit-drive-folder" type="text" placeholder="Tên thư mục (VD: ABC)" style="width:100%; margin-top:4px;" oninput="validateEditDriveDuplicates()">
+        <div id="edit-drive-folder-error" class="field-validation hidden"></div>
+        <div class="hint">Nhập tên thư mục mới dùng để lưu ảnh và kết quả (VD: <code>1013</code>, <code>WDTC</code>, <code>BNO</code>).</div>
       </div>
       <div>
         <label for="edit-drive-url"><b>Link Google Drive Folder</b></label>
-        <input id="edit-drive-url" type="text" placeholder="https://drive.google.com/drive/folders/..." style="width:100%; margin-top:4px;">
-        <div class="hint">Phải là link chia sẻ thư mục Google Drive (chế độ Bất kỳ ai có đường liên kết). Để trống để gỡ link.</div>
+        <input id="edit-drive-url" type="text" placeholder="https://drive.google.com/drive/folders/..." style="width:100%; margin-top:4px;" oninput="validateEditDriveDuplicates()">
+        <div id="edit-drive-url-error" class="field-validation hidden"></div>
+        <div class="hint">Phải là link chia sẻ thư mục Google Drive (chế độ Bất kỳ ai có đường liên kết).</div>
       </div>
+      <div class="grid3">
+        <div>
+          <label for="edit-drive-sku">SKU (để trống = tất cả)</label>
+          <input id="edit-drive-sku" type="text" placeholder="SP1M29">
+        </div>
+        <div>
+          <label for="edit-drive-limit">Giới hạn</label>
+          <input id="edit-drive-limit" type="number" min="1" placeholder="Tất cả">
+        </div>
+        <div>
+          <label for="edit-drive-perchat">Ảnh mỗi chat</label>
+          <input id="edit-drive-perchat" type="number" min="1" max="20" value="10">
+        </div>
+      </div>
+      <div id="edit-drive-message" class="edit-drive-message hidden" role="status" aria-live="polite"></div>
     </div>
     <div class="modal-footer">
       <button class="ghost btn-sm" type="button" onclick="closeEditDriveModal()">Hủy</button>
-      <button class="primary btn-sm" type="button" onclick="saveDriveLinkModal()">💾 Lưu liên kết</button>
+      <button id="save-drive-link-btn" class="primary btn-sm" type="button" onclick="saveDriveLinkModal()">💾 Lưu liên kết</button>
     </div>
   </div>
 </div>

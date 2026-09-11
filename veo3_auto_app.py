@@ -526,10 +526,12 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
             folders_map[f_name] = str(item.get("url", "")).strip()
             folder_modified_at[f_name] = str(item.get("modified_at", "")).strip()
 
-    # Also collect from sync_folders if not already mapped
+    # Also collect folder names from the sync snapshot if not already mapped.
+    # The configured URL list is authoritative: a historical drive_url must not
+    # restore a link after the user explicitly unlinks a folder.
     for f_name, f_info in sync_folders.items():
         if f_name and f_name not in folders_map and isinstance(f_info, dict):
-            folders_map[f_name] = str(f_info.get("drive_url", "")).strip()
+            folders_map[f_name] = ""
 
     # Also discover all existing local fabric folders on disk
     if include_unlinked:
@@ -1997,6 +1999,10 @@ class PipelineController:
                 "drive_sync_recent": folders_stats.get("recent_sync_history", []),
                 "output_subdirectories": output_children,
                 "active_running_folder": self.active_running_folder,
+                "active_pipeline_folders": [
+                    folder for folder in self.telegram_queue_folders
+                    if folder not in self.telegram_completed_folders
+                ],
                 "images_per_chat": images_per_chat,
                 "auto_retry_enabled": bool(app_ui.get("auto_retry_enabled", True)),
                 "auto_retry_delay_seconds": int(app_ui.get("auto_retry_delay_seconds", 120)),
@@ -3352,6 +3358,7 @@ class PipelineController:
     def save_drive_link(self, payload):
         folder = str(payload.get("folder", "")).strip()
         url = str(payload.get("url", "")).strip()
+        original_folder = str(payload.get("original_folder", folder)).strip()
         modified_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         if not folder:
             raise ValueError("Tên thư mục không được để trống.")
@@ -3365,6 +3372,25 @@ class PipelineController:
         if not isinstance(urls, list):
             urls = []
 
+        new_folder_id = drive_folder_id(url) if url else ""
+        for item in urls:
+            item_folder = str(item.get("folder", "")).strip()
+            same_original = item_folder.casefold() == original_folder.casefold()
+            if (
+                original_folder.casefold() != folder.casefold()
+                and item_folder.casefold() == folder.casefold()
+                and not same_original
+            ):
+                raise ValueError(f"Tên thư mục '{folder}' đã có trong danh sách Drive.")
+            if (
+                new_folder_id
+                and drive_folder_id(item.get("url", "")) == new_folder_id
+                and not same_original
+            ):
+                raise ValueError(
+                    f"Link Drive này đã được gán cho thư mục '{item_folder or 'Mặc định'}'."
+                )
+
         # Explicitly assigning/editing a link restores a previously hidden card.
         hidden_folders = drive.get("hidden_folders", [])
         if isinstance(hidden_folders, list):
@@ -3376,17 +3402,12 @@ class PipelineController:
         
         found = False
         new_urls = []
-        new_folder_id = drive_folder_id(url) if url else ""
         for item in urls:
             item_folder = str(item.get("folder", "")).strip()
-            if item_folder.casefold() == folder.casefold():
+            if item_folder.casefold() == original_folder.casefold():
                 if url:
                     new_urls.append({"url": url, "folder": folder, "modified_at": modified_at})
                 found = True
-            elif new_folder_id and drive_folder_id(item.get("url", "")) == new_folder_id:
-                # A Drive folder can belong to only one managed local folder.
-                # Reassign it to the folder explicitly entered by the user.
-                continue
             else:
                 new_urls.append(item)
         if not found and url:

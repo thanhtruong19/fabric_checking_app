@@ -1465,7 +1465,7 @@ class VEO3AutoAppTests(unittest.TestCase):
             stats = app.compute_drive_folders_stats(root, saved)
             self.assertEqual([item["folder"] for item in stats["folders"]], ["ABC"])
 
-    def test_save_drive_link_reassigns_duplicate_drive_id_to_requested_folder(self):
+    def test_save_drive_link_rejects_duplicate_drive_id_for_another_folder(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             url = "https://drive.google.com/drive/folders/SAME_ID?usp=sharing"
@@ -1478,14 +1478,36 @@ class VEO3AutoAppTests(unittest.TestCase):
             controller = app.PipelineController()
             controller.project_dir = root
 
-            controller.save_drive_link({"folder": "NEW", "url": url})
+            with self.assertRaisesRegex(ValueError, "đã được gán"):
+                controller.save_drive_link({"folder": "NEW", "url": url})
 
             saved = json.loads((root / "config.json").read_text(encoding="utf-8"))
             self.assertEqual(len(saved["google_drive"]["urls"]), 1)
-            self.assertEqual(saved["google_drive"]["urls"][0]["folder"], "NEW")
+            self.assertEqual(saved["google_drive"]["urls"][0]["folder"], "OLD")
             stats = app.compute_drive_folders_stats(root, saved)
-            self.assertEqual(stats["folders"][0]["folder"], "NEW")
+            self.assertEqual(stats["folders"][0]["folder"], "OLD")
             self.assertEqual(stats["folders"][0]["url"], url)
+
+    def test_unlinked_folder_does_not_restore_url_from_sync_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            stale_url = "https://drive.google.com/drive/folders/NHC_OLD"
+            (root / "config.json").write_text(json.dumps({
+                "google_drive": {"urls": [], "share_url": ""}
+            }), encoding="utf-8")
+            (root / "status_drive_sync.json").write_text(json.dumps({
+                "folders": {
+                    "NHC": {"folder": "NHC", "drive_url": stale_url, "drive_total_images": 8}
+                }
+            }), encoding="utf-8")
+            (root / "textures_raw" / "NHC").mkdir(parents=True)
+
+            config = json.loads((root / "config.json").read_text(encoding="utf-8"))
+            stats = app.compute_drive_folders_stats(root, config)
+
+            nhc = next(item for item in stats["folders"] if item["folder"] == "NHC")
+            self.assertEqual(nhc["url"], "")
+            self.assertFalse(nhc["has_drive_url"])
 
     def test_extract_chatgpt_quota_info_formats(self):
         # 1. English card with absolute time
@@ -1640,6 +1662,19 @@ class VEO3AutoAppTests(unittest.TestCase):
         self.assertIn("Folder:</b> 1/1 (100%)", summary)
         self.assertIn("SKU:</b> 3/3 (100%)", summary)
         self.assertNotIn("13", summary)
+
+    def test_state_exposes_only_unfinished_pipeline_folders(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config.json").write_text(json.dumps({}), encoding="utf-8")
+            controller = app.PipelineController()
+            controller.project_dir = root
+            controller.telegram_queue_folders = ["DONE", "ACTIVE", "WAITING"]
+            controller.telegram_completed_folders = {"DONE"}
+
+            state = controller.state()
+
+            self.assertEqual(state["active_pipeline_folders"], ["ACTIVE", "WAITING"])
 
     def test_pipeline_folder_postcondition_rejects_missing_output(self):
         controller = app.PipelineController.__new__(app.PipelineController)

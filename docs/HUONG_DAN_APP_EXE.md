@@ -52,9 +52,9 @@ Nếu tab hoặc cửa sổ Chrome automation bị đóng trong lúc đang tạo
 Lỗi mất trình duyệt không làm tăng số lần retry của SKU. Nếu app không thể khôi phục sau
 3 lần liên tiếp, hãy mở lại Chrome automation, kiểm tra đăng nhập ChatGPT rồi chạy lại.
 
-## Quản lý Link Google Drive & Đối chiếu thư mục vải (Tab 4)
+## Quản lý Link Google Drive & Đối chiếu thư mục vải (Modal)
 
-Tab **4. Quản lý Drive & So sánh vải** cho phép quản lý danh bạ link Google Drive và đối chiếu chi tiết với toàn bộ các thư mục vải đã có trên máy tính:
+Nhấn icon folder `📁` nằm phía trên nút **Nhật ký thời gian thực** để mở modal **Quản lý Drive & So sánh vải**. Modal chiếm khoảng 3/4 màn hình và cho phép quản lý danh bạ link Google Drive, đồng thời đối chiếu chi tiết với toàn bộ thư mục vải đã có trên máy tính:
 
 1. **Tự động quét thư mục vải:**
    - App tự động tìm thấy toàn bộ các thư mục vải hiện có trong `output/chatgpt/`, `textures_raw/`, `textures_cropped/` và `textures/` (kể cả những thư mục chưa từng gán link Drive).
