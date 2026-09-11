@@ -8,6 +8,7 @@ let lastPendingList = [];
 let driveUrlsQueue = [];
 let driveFoldersStats = [];
 let hiddenDriveFolders = [];
+const dismissedPipelineFolders = new Set();
 let activePipelineFolders = [];
 let pipelineIsRunning = false;
 let currentSelectedFolder = 'all';
@@ -23,10 +24,8 @@ function driveFolderId(url) {
 function renderDriveFolders(statsList, queueList) {
   const container = $('drive-folders-list');
   container.replaceChildren();
-  container.classList.toggle('pipeline-empty', !pipelineIsRunning);
 
   // Combine queue with stats
-  const hiddenFolderKeys = new Set(hiddenDriveFolders.map(folder => String(folder || '').trim().toLocaleLowerCase('vi')));
   const activePipelineKeys = new Set(activePipelineFolders.map(folder => String(folder || '').trim().toLocaleLowerCase('vi')));
   const items = ((statsList && statsList.length > 0) ? statsList : queueList.map(q => ({
     folder: q.folder || '',
@@ -41,8 +40,10 @@ function renderDriveFolders(statsList, queueList) {
     is_active: false
   }))).filter(item => {
     const folderKey = String(item.folder_display || item.folder || 'Mặc định').trim().toLocaleLowerCase('vi');
-    return pipelineIsRunning && activePipelineKeys.has(folderKey) && !hiddenFolderKeys.has(folderKey);
+    return activePipelineKeys.has(folderKey) && !dismissedPipelineFolders.has(folderKey);
   });
+
+  container.classList.toggle('pipeline-empty', items.length === 0);
 
   const sortedItems = [...items].sort((a, b) => {
     const aModified = Number(a.modified_ts || Date.parse(a.modified_at || '') || 0);
@@ -73,7 +74,7 @@ function renderDriveFolders(statsList, queueList) {
     empty.style.textAlign = 'center';
     empty.textContent = items.length
       ? `Không tìm thấy thư mục khớp với “${driveFolderSearch.trim()}”.`
-      : (pipelineIsRunning
+      : (activePipelineKeys.size
         ? 'Không còn thư mục nào đang chờ xử lý trong pipeline.'
         : 'Chưa có pipeline nào đang chạy.');
     container.appendChild(empty);
@@ -187,7 +188,7 @@ function renderDriveFolders(statsList, queueList) {
     delBtn.type = 'button';
     delBtn.className = 'danger btn-sm';
     delBtn.innerHTML = '✕';
-    delBtn.title = 'Gỡ thư mục khỏi danh sách quản lý';
+    delBtn.title = 'Ẩn khỏi danh sách pipeline đang hiển thị';
     delBtn.onclick = () => removeDriveFolder(item.folder, item.url);
 
     actions.appendChild(runChatGptBtn);
@@ -285,12 +286,13 @@ async function openFolderDirectory(folder) {
 
 async function removeDriveFolder(folder, url) {
   const name = folder || 'Mặc định';
-  if (!confirm(`Gỡ thư mục "${name}" khỏi danh sách quản lý Google Drive?\n(Thư mục gốc trên Google Drive và toàn bộ dữ liệu trên máy vẫn được giữ nguyên).`)) return;
+  if (!confirm(`Bỏ qua thư mục "${name}" trong pipeline hiện tại và chuyển sang thư mục tiếp theo?\n(Link Drive, dữ liệu local và mục trong Quản lý Drive vẫn được giữ nguyên).`)) return;
   try {
-    await api('/api/delete-drive-folder', { folder: folder || '', url: url || '' });
-    await fetchState();
-  } catch (e) {
-    toastError(e);
+    await api('/api/skip-pipeline-folder', { folder: folder || '' });
+    dismissedPipelineFolders.add(String(name).trim().toLocaleLowerCase('vi'));
+    renderDriveFolders(driveFoldersStats, driveUrlsQueue);
+  } catch (error) {
+    toastError(error);
   }
 }
 
@@ -1362,8 +1364,15 @@ $('load-default-flow-prompt').onclick = async () => {
 $('save').onclick = () => api('/api/save', payload()).then(() => alert('Đã lưu cấu hình thành công!')).catch(toastError);
 $('run').onclick = async () => {
   try {
+    dismissedPipelineFolders.clear();
     const pl = payload();
     pl.engine = 'chatgpt';
+    if (pl.source_mode === 'drive') {
+      pl.pipeline_drive_urls = getDrivePipelineQueue();
+      if (!pl.pipeline_drive_urls.length) {
+        throw new Error('Không có thư mục chưa hoàn thành nào để chạy ChatGPT Pipeline.');
+      }
+    }
     if (!(await prepareSwatchPrerequisites(pl))) return;
     await api('/api/run', pl);
   } catch (error) {
@@ -1803,11 +1812,40 @@ async function addAuditedFolderToPipeline(url, folder) {
 let currentAuditFolderData = null;
 let currentDriveTableFolders = [];
 let editDriveOriginalFolder = '';
+const selectedDrivePipelineFolders = new Set();
+
+function drivePipelineFolderKey(folder) {
+  return String(folder || '').trim().toLocaleLowerCase('vi');
+}
+
+function toggleDrivePipelineFolder(folder, checked) {
+  const key = drivePipelineFolderKey(folder);
+  if (!key) return;
+  if (checked) selectedDrivePipelineFolders.add(key);
+  else selectedDrivePipelineFolders.delete(key);
+}
+
+function getDrivePipelineQueue() {
+  const unfinished = currentDriveTableFolders.filter(item => item.status !== 'completed');
+  const selected = unfinished.filter(item => selectedDrivePipelineFolders.has(drivePipelineFolderKey(item.folder)));
+  const targets = selected.length ? selected : unfinished;
+  return targets.map(item => ({
+    folder: String(item.folder || '').trim(),
+    url: String(item.url || '').trim(),
+    modified_at: String(item.modified_at || '').trim()
+  }));
+}
 
 function renderDriveManagementSection(statsData) {
   if (!statsData) return;
   const folders = statsData.folders || [];
   currentDriveTableFolders = folders;
+  const availableKeys = new Set(
+    folders.filter(item => item.status !== 'completed').map(item => drivePipelineFolderKey(item.folder))
+  );
+  for (const key of selectedDrivePipelineFolders) {
+    if (!availableKeys.has(key)) selectedDrivePipelineFolders.delete(key);
+  }
 
   // 1. Update badges & metrics
   if ($('dt-total-folders')) $('dt-total-folders').textContent = statsData.total_folders || 0;
@@ -1846,7 +1884,7 @@ function filterDriveTable() {
 
   if (!filtered.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="9" style="text-align:center; padding:32px;" class="hint">Không tìm thấy thư mục vải nào phù hợp với bộ lọc.</td>`;
+    tr.innerHTML = `<td colspan="10" style="text-align:center; padding:32px;" class="hint">Không tìm thấy thư mục vải nào phù hợp với bộ lọc.</td>`;
     tbody.appendChild(tr);
     return;
   }
@@ -1854,7 +1892,22 @@ function filterDriveTable() {
   filtered.forEach(item => {
     const tr = document.createElement('tr');
 
-    // 1. Folder Name + Status Badge
+    // 1. Pipeline selection
+    const tdSelect = document.createElement('td');
+    tdSelect.className = 'dt-select-cell';
+    tdSelect.innerHTML = `
+      <input type="checkbox" class="dt-pipeline-checkbox"
+        aria-label="Chọn thư mục ${escapeHtml(item.folder)} để chạy ChatGPT Pipeline"
+        title="${item.status === 'completed' ? 'Thư mục đã hoàn thành 100%, không cần xử lý lại' : 'Chọn thư mục này để chạy ChatGPT Pipeline'}"
+        ${item.status === 'completed' ? 'disabled' : ''}
+        ${selectedDrivePipelineFolders.has(drivePipelineFolderKey(item.folder)) ? 'checked' : ''}>
+    `;
+    tdSelect.querySelector('.dt-pipeline-checkbox').addEventListener('change', event => {
+      toggleDrivePipelineFolder(item.folder, event.target.checked);
+    });
+    tr.appendChild(tdSelect);
+
+    // 2. Folder Name
     const tdFolder = document.createElement('td');
     let badgeHtml = '';
     if (item.status === 'completed') {
@@ -1876,7 +1929,7 @@ function filterDriveTable() {
     `;
     tr.appendChild(tdFolder);
 
-    // 2. Folder Status
+    // 3. Folder Status
     const tdStatus = document.createElement('td');
     tdStatus.innerHTML = badgeHtml;
     tr.appendChild(tdStatus);

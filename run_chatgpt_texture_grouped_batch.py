@@ -533,6 +533,8 @@ def process_turn(
                 "error_type": None,
                 "output": output_info,
                 "conversation_url": conversation_url,
+                "chat_deleted": False,
+                "chat_cleanup_pending": bool(conversation_url),
                 "completed_at": now_text(),
             }
         )
@@ -613,6 +615,61 @@ def process_turn(
         status_data[sku] = item
         save_status(status_data)
         return False
+
+
+def delete_grouped_conversation(page, status_data, skus):
+    """Delete one completed grouped chat before another conversation is opened."""
+    if not skus:
+        return
+    conversation_url = next(
+        (
+            status_data.get(sku, {}).get("conversation_url")
+            for sku in reversed(skus)
+            if isinstance(status_data.get(sku), dict)
+            and status_data.get(sku, {}).get("conversation_url")
+        ),
+        None,
+    )
+    if not conversation_url:
+        raise RuntimeError(
+            "Grouped texture outputs were saved, but the conversation URL is missing; "
+            "refusing to open another chat before cleanup is verified."
+        )
+    legacy.delete_automation_chat(
+        page, ", ".join(skus), conversation_url
+    )
+    deleted_at = now_text()
+    for sku in skus:
+        item = status_data.get(sku)
+        if not isinstance(item, dict):
+            continue
+        item.update(
+            {
+                "chat_deleted": True,
+                "chat_cleanup_pending": False,
+                "chat_deleted_at": deleted_at,
+            }
+        )
+        item.pop("conversation_url", None)
+    save_status(status_data)
+    print(f"Deleted grouped ChatGPT texture chat ({len(skus)} image(s)).")
+
+
+def cleanup_pending_grouped_chats(page, status_data):
+    pending_by_url = {}
+    for sku, item in status_data.items():
+        if (
+            not isinstance(item, dict)
+            or item.get("chat_deleted")
+            or item.get("chat_cleanup_pending") is not True
+        ):
+            continue
+        conversation_url = item.get("conversation_url")
+        if conversation_url:
+            pending_by_url.setdefault(conversation_url, []).append(sku)
+    for skus in pending_by_url.values():
+        print(f"Cleaning pending grouped texture chat before creating a new one: {', '.join(skus)}")
+        delete_grouped_conversation(page, status_data, skus)
 
 
 def main():
@@ -731,6 +788,8 @@ def main():
                 print(f"Browser and ChatGPT check passed; {len(context.pages)} open tab(s).")
                 return
 
+            cleanup_pending_grouped_chats(page, status_data)
+
             turn_in_chat = 0
             conversation_number = 0
             consecutive_failures = 0
@@ -738,6 +797,7 @@ def main():
             skip_next_chat_delay = False
             selected_index = 0
             batch_had_failures = False
+            current_chat_skus = []
             while selected_index < len(selected):
                 sku, source_path, folder = selected[selected_index]
                 if turn_in_chat == 0:
@@ -817,6 +877,12 @@ def main():
                 if result is not True:
                     batch_had_failures = True
                     consecutive_failures += 1
+                    if legacy.is_conversation_url(page.url):
+                        current_chat_skus.append(sku)
+                        status_data[sku]["conversation_url"] = legacy.normalized_url(page.url)
+                        save_status(status_data)
+                    delete_grouped_conversation(page, status_data, current_chat_skus)
+                    current_chat_skus = []
                     turn_in_chat = 0
                     selected_index += 1
                     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
@@ -830,10 +896,14 @@ def main():
                 browser_recoveries = 0
                 selected_index += 1
                 turn_in_chat += 1
+                current_chat_skus.append(sku)
                 if turn_in_chat >= args.images_per_chat:
+                    delete_grouped_conversation(page, status_data, current_chat_skus)
+                    current_chat_skus = []
                     turn_in_chat = 0
                 else:
                     paced_sleep("between_images", "before attaching the next raw texture")
+            delete_grouped_conversation(page, status_data, current_chat_skus)
             if batch_had_failures:
                 print("Batch still has pending texture SKU(s); returning a failure so the pipeline can retry.")
                 raise SystemExit(1)

@@ -13,6 +13,64 @@ from tools.build.prepare_build_assets import create_default_config
 
 
 class VEO3AutoAppTests(unittest.TestCase):
+    def test_grouped_chat_cleanup_deletes_conversation_and_clears_status(self):
+        import run_chatgpt_fabric_grouped_batch as fabric
+
+        for module in (grouped, fabric):
+            with self.subTest(module=module.__name__):
+                status = {
+                    "SKU001": {
+                        "status": "done",
+                        "conversation_url": "https://chatgpt.com/c/GROUPED",
+                        "chat_cleanup_pending": True,
+                    },
+                    "SKU002": {
+                        "status": "done",
+                        "conversation_url": "https://chatgpt.com/c/GROUPED",
+                        "chat_cleanup_pending": True,
+                    },
+                }
+                page = Mock()
+                with patch.object(module.legacy, "delete_automation_chat") as delete_chat, \
+                        patch.object(module, "save_status") as save_status:
+                    module.delete_grouped_conversation(
+                        page, status, ["SKU001", "SKU002"]
+                    )
+
+                delete_chat.assert_called_once_with(
+                    page, "SKU001, SKU002", "https://chatgpt.com/c/GROUPED"
+                )
+                save_status.assert_called_once_with(status)
+                for item in status.values():
+                    self.assertTrue(item["chat_deleted"])
+                    self.assertFalse(item["chat_cleanup_pending"])
+                    self.assertNotIn("conversation_url", item)
+
+    def test_grouped_chat_cleanup_refuses_new_chat_without_conversation_url(self):
+        with patch.object(grouped, "save_status"):
+            with self.assertRaisesRegex(RuntimeError, "conversation URL is missing"):
+                grouped.delete_grouped_conversation(
+                    Mock(), {"SKU001": {"status": "done"}}, ["SKU001"]
+                )
+
+    def test_grouped_startup_cleanup_ignores_historical_conversation_urls(self):
+        historical = {
+            "OLD": {
+                "status": "done",
+                "conversation_url": "https://chatgpt.com/c/HISTORICAL",
+            },
+            "PENDING": {
+                "status": "done",
+                "conversation_url": "https://chatgpt.com/c/PENDING",
+                "chat_cleanup_pending": True,
+            },
+        }
+        page = Mock()
+        with patch.object(grouped, "delete_grouped_conversation") as delete_chat:
+            grouped.cleanup_pending_grouped_chats(page, historical)
+
+        delete_chat.assert_called_once_with(page, historical, ["PENDING"])
+
     def test_drive_items_are_deduplicated_by_folder_id(self):
         items = [
             {"url": "https://drive.google.com/drive/folders/ABC?usp=drive_link", "folder": "FIRST"},
@@ -767,6 +825,99 @@ class VEO3AutoAppTests(unittest.TestCase):
         controller.save_settings.assert_not_called()
         worker.start.assert_called_once()
 
+    def test_pipeline_uses_selected_folder_queue_without_replacing_saved_links(self):
+        controller = app.PipelineController.__new__(app.PipelineController)
+        controller.worker = None
+        controller.stop_requested = threading.Event()
+        controller.append_log = Mock()
+        controller.validate_run = Mock()
+        controller.save_settings = Mock()
+        worker = Mock()
+        payload = {
+            "source_mode": "drive",
+            "drive_urls": [
+                {"folder": "FIRST", "url": "https://drive.google.com/drive/folders/FIRST"},
+                {"folder": "SECOND", "url": "https://drive.google.com/drive/folders/SECOND"},
+            ],
+            "pipeline_drive_urls": [
+                {"folder": "SECOND", "url": "https://drive.google.com/drive/folders/SECOND"},
+            ],
+        }
+
+        with patch.object(app.threading, "Thread", return_value=worker) as thread_factory:
+            controller.start_pipeline(payload)
+
+        controller.save_settings.assert_called_once_with(payload)
+        queue = thread_factory.call_args.kwargs["args"][0]
+        self.assertEqual([item["folder"] for item in queue], ["SECOND"])
+        worker.start.assert_called_once()
+
+    def test_selected_drive_folder_requires_link_when_import_is_enabled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config.json").write_text("{}", encoding="utf-8")
+            controller = app.PipelineController.__new__(app.PipelineController)
+            controller.project_dir = root
+            with patch("veo3_auto_app.valid_project_dir", return_value=True), \
+                    patch("veo3_auto_app.locate_python", return_value=Path(app.sys.executable)):
+                with self.assertRaisesRegex(ValueError, "NHD"):
+                    controller.validate_run({
+                        "source_mode": "drive",
+                        "engine": "chatgpt",
+                        "pipeline_drive_urls": [{"folder": "NHD", "url": ""}],
+                        "flows": {"import": True},
+                    })
+
+    def test_skipping_active_folder_terminates_it_and_runs_next_folder(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            marker = root / "second-folder-ran.txt"
+            (root / "config.json").write_text("{}", encoding="utf-8")
+            (root / "crop_textures.py").write_text(
+                "import json, pathlib, time\n"
+                "config = json.loads(pathlib.Path('config.json').read_text())\n"
+                "folder = pathlib.Path(config['google_drive']['destination_dir']).name\n"
+                "if folder == 'FIRST': time.sleep(20)\n"
+                f"else: pathlib.Path(r'{marker}').write_text(folder)\n",
+                encoding="utf-8",
+            )
+            controller = app.PipelineController()
+            controller.project_dir = root
+            controller.python_exe = Path(app.sys.executable)
+            controller.validate_run = Mock()
+            controller.save_settings = Mock()
+            controller.notify_telegram = Mock()
+            payload = {
+                "source_mode": "drive",
+                "pipeline_drive_urls": [
+                    {"folder": "FIRST", "url": ""},
+                    {"folder": "SECOND", "url": ""},
+                ],
+                "limit": "1",
+                "auto_retry_enabled": False,
+                "flows": {"import": False, "crop": True},
+            }
+
+            controller.start_pipeline(payload)
+            deadline = time.monotonic() + 5
+            while controller.active_running_folder != "FIRST" and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(controller.active_running_folder, "FIRST")
+
+            result = controller.skip_pipeline_folder({"folder": "FIRST"})
+            self.assertTrue(result["was_active"])
+            deadline = time.monotonic() + 8
+            while controller.is_running() and time.monotonic() < deadline:
+                time.sleep(0.05)
+
+            self.assertFalse(
+                controller.is_running(),
+                f"active={controller.active_running_folder!r}\n{controller.log_text}",
+            )
+            self.assertEqual(marker.read_text(encoding="utf-8"), "SECOND")
+            self.assertEqual(controller.status, "Hoàn thành")
+            self.assertIn("chuyển sang thư mục tiếp theo", controller.log_text)
+
     def test_stop_escalates_from_break_to_terminate_and_kill(self):
         controller = app.PipelineController.__new__(app.PipelineController)
         controller.lock = threading.RLock()
@@ -1378,7 +1529,7 @@ class VEO3AutoAppTests(unittest.TestCase):
             flow_text = app.get_default_prompt_text(root, "flow_texture")
             self.assertEqual(flow_text, "GOOGLE FLOW PROMPT")
 
-    def test_delete_drive_folder_removes_from_management_but_keeps_disk_data(self):
+    def test_dismiss_pipeline_folder_keeps_drive_management_and_disk_data(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config = {
@@ -1422,9 +1573,9 @@ class VEO3AutoAppTests(unittest.TestCase):
             saved_urls = saved["google_drive"]["urls"]
             self.assertEqual(len(saved_urls), 2)
             self.assertEqual([item["folder"] for item in saved_urls], ["ABC", "XYZ"])
-            self.assertEqual(saved["google_drive"]["hidden_folders"], ["ABC"])
+            self.assertEqual(saved["google_drive"]["hidden_folders"], [])
 
-            # Verify stale sync state cannot recreate the deleted folder card.
+            # Sync state and management records remain intact.
             sync_data = json.loads((root / "status_drive_sync.json").read_text(encoding="utf-8"))
             self.assertIn("ABC", sync_data["folders"])
             self.assertIn("XYZ", sync_data["folders"])
@@ -1434,11 +1585,11 @@ class VEO3AutoAppTests(unittest.TestCase):
             self.assertTrue(raw_abc.exists())
             self.assertEqual((raw_abc / "test.jpg").read_bytes(), b"test-bytes")
 
-            # Verify compute_drive_folders_stats only returns XYZ
+            # Both folders remain visible in Drive management.
             stats = app.compute_drive_folders_stats(root, saved)
             folders = [f["folder"] for f in stats["folders"]]
             self.assertIn("XYZ", folders)
-            self.assertNotIn("ABC", folders)
+            self.assertIn("ABC", folders)
 
     def test_save_drive_link_restores_hidden_management_card(self):
         with tempfile.TemporaryDirectory() as temporary:

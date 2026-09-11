@@ -495,14 +495,6 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
 
     drive = config.get("google_drive", {})
     configured_urls = deduplicate_drive_items(drive.get("urls", []))
-    hidden_folder_values = drive.get("hidden_folders", [])
-    if not isinstance(hidden_folder_values, list):
-        hidden_folder_values = []
-    hidden_folders = {
-        str(folder).strip().replace("/", "\\").casefold()
-        for folder in hidden_folder_values
-        if str(folder).strip()
-    }
     if not configured_urls and drive.get("share_url"):
         configured_urls = [{"url": drive.get("share_url"), "folder": ""}]
 
@@ -567,8 +559,6 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
 
     for folder_name, url in folders_map.items():
         if not folder_name:
-            continue
-        if folder_name.strip().replace("/", "\\").casefold() in hidden_folders:
             continue
         folder_display = folder_name
         raw_dir = raw_root / folder_name
@@ -1561,6 +1551,7 @@ class PipelineController:
         self.process = None
         self.stop_escalation_thread = None
         self.stop_requested = threading.Event()
+        self.skipped_pipeline_folders = set()
         self.server = None
         self.last_client_at = time.monotonic()
         self.active_running_folder = None
@@ -2002,6 +1993,7 @@ class PipelineController:
                 "active_pipeline_folders": [
                     folder for folder in self.telegram_queue_folders
                     if folder not in self.telegram_completed_folders
+                    and folder.casefold() not in self.skipped_pipeline_folders
                 ],
                 "images_per_chat": images_per_chat,
                 "auto_retry_enabled": bool(app_ui.get("auto_retry_enabled", True)),
@@ -2202,7 +2194,17 @@ class PipelineController:
             if not safe_is_dir(local_dir):
                 raise ValueError("Hãy chọn một thư mục ảnh vải local đang tồn tại.")
         if source_mode == "drive" and flows.get("import"):
-            drive_urls = payload.get("drive_urls", [])
+            drive_urls = payload.get("pipeline_drive_urls", payload.get("drive_urls", []))
+            missing_link_folders = [
+                str(item.get("folder", "")).strip() or "Mặc định"
+                for item in drive_urls
+                if isinstance(item, dict) and not str(item.get("url", "")).strip()
+            ]
+            if missing_link_folders:
+                raise ValueError(
+                    "Các thư mục đã chọn chưa có link Google Drive: "
+                    + ", ".join(missing_link_folders)
+                )
             valid_urls = [i for i in drive_urls if str(i.get("url", "")).strip()]
             if not valid_urls:
                 raise ValueError("Hãy nhập ít nhất một link thư mục Google Drive public hợp lệ.")
@@ -2408,15 +2410,23 @@ class PipelineController:
         if persist_settings:
             self.save_settings(payload)
         self.stop_requested.clear()
+        self.skipped_pipeline_folders = set()
         self.append_log("\n" + "=" * 72 + "\nBắt đầu pipeline\n")
         
         source_mode = str(payload.get("source_mode", "drive")).strip().lower()
         if source_mode == "drive":
-            queue = payload.get("drive_urls", [])
-            valid_queue = deduplicate_drive_items(
-                [i for i in queue if isinstance(i, dict) and str(i.get("url", "")).strip()]
-            )
+            has_pipeline_queue = isinstance(payload.get("pipeline_drive_urls"), list)
+            queue = payload.get("pipeline_drive_urls") if has_pipeline_queue else payload.get("drive_urls", [])
+            queue_items = [i for i in queue if isinstance(i, dict)]
+            if has_pipeline_queue:
+                valid_queue = queue_items
+            else:
+                valid_queue = deduplicate_drive_items(
+                    [i for i in queue_items if str(i.get("url", "")).strip()]
+                )
             if not valid_queue:
+                if has_pipeline_queue:
+                    raise ValueError("Không có thư mục chưa hoàn thành nào để chạy pipeline.")
                 url = str(payload.get("drive_url", "")).strip()
                 folder = str(payload.get("folder", "")).strip()
                 valid_queue = [{"url": url, "folder": folder}]
@@ -2480,6 +2490,11 @@ class PipelineController:
                     
                 url = str(item.get("url", "")).strip()
                 folder = str(item.get("folder", "")).strip()
+                folder_key = (folder or "Mặc định").casefold()
+                with self.lock:
+                    if folder_key in self.skipped_pipeline_folders:
+                        self.append_log(f"\n[SKIP] Bỏ qua thư mục [{folder or 'Mặc định'}] theo yêu cầu người dùng.\n")
+                        continue
                 self.active_running_folder = folder
                 
                 if source_mode == "drive":
@@ -2494,6 +2509,9 @@ class PipelineController:
                     if self.stop_requested.is_set():
                         stopped = True
                         break
+                    with self.lock:
+                        if folder_key in self.skipped_pipeline_folders:
+                            break
                     folder_tag = f" [{folder}]" if folder else ""
                     self.active_running_step = step.label
                     self.active_running_sku = step_payload.get("sku")
@@ -2520,6 +2538,10 @@ class PipelineController:
                             env=environment,
                             creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
                         )
+                        with self.lock:
+                            skip_after_start = folder_key in self.skipped_pipeline_folders
+                        if skip_after_start and self.process.poll() is None:
+                            self.process.terminate()
                         if self.process.stdout:
                             for line in self.process.stdout:
                                 self.append_log(line)
@@ -2533,6 +2555,13 @@ class PipelineController:
                         if self.process and self.process.stdout:
                             self.process.stdout.close()
                         self.process = None
+                    with self.lock:
+                        folder_skipped = folder_key in self.skipped_pipeline_folders
+                    if folder_skipped:
+                        self.append_log(
+                            f"[SKIP] Đã dừng xử lý [{folder or 'Mặc định'}]; chuyển sang thư mục tiếp theo.\n"
+                        )
+                        break
                     if self.stop_requested.is_set():
                         stopped = True
                         break
@@ -2583,6 +2612,12 @@ class PipelineController:
                     self.clear_telegram_errors(folder, step.label, step_payload.get("sku"))
                     self.append_log(f"<<< Hoàn tất {step.label}{folder_tag}\n")
                     
+                with self.lock:
+                    folder_skipped = folder_key in self.skipped_pipeline_folders
+                if folder_skipped:
+                    self.active_running_step = None
+                    self.active_running_sku = None
+                    continue
                 if failed or stopped:
                     break
                 completion_issue = self.pipeline_folder_completion_issue(folder, payload)
@@ -3274,26 +3309,24 @@ class PipelineController:
         drive = config.setdefault("google_drive", {})
         urls = drive.get("urls", [])
 
-        # Local output folders are auto-discovered when building the management
-        # list. Remember dismissed folder names without deleting their Drive
-        # links, sync history, or local data.
+        # This legacy endpoint used to hide the folder from Drive management.
+        # Dismissing a pipeline card is now client-side only. Remove any stale
+        # hidden marker while preserving the Drive link and all local data.
         if folder:
             hidden_folders = drive.get("hidden_folders", [])
             if not isinstance(hidden_folders, list):
                 hidden_folders = []
             folder_key = folder.casefold()
-            if not any(
-                str(item).strip().replace("/", "\\").casefold() == folder_key
-                for item in hidden_folders
-            ):
-                hidden_folders.append(folder)
-            drive["hidden_folders"] = hidden_folders
+            drive["hidden_folders"] = [
+                item for item in hidden_folders
+                if str(item).strip().replace("/", "\\").casefold() != folder_key
+            ]
 
         save_json_atomic(self.config_path, config)
 
         self.append_log(
-            f"Đã gỡ thư mục Drive [{folder or url}] khỏi danh sách quản lý; "
-            "dữ liệu local và thư mục gốc trên Google Drive được giữ nguyên.\n"
+            f"Đã ẩn thẻ pipeline [{folder or url}] khỏi giao diện; "
+            "link Drive, mục quản lý và dữ liệu local được giữ nguyên.\n"
         )
         return {"ok": True, "drive_urls": urls, "hidden_folders": drive.get("hidden_folders", [])}
 
@@ -3738,6 +3771,45 @@ class PipelineController:
             )
             self.stop_escalation_thread.start()
 
+    def skip_pipeline_folder(self, payload):
+        folder = str(payload.get("folder", "")).strip()
+        display_name = folder or "Mặc định"
+        folder_key = display_name.casefold()
+        with self.lock:
+            queued_keys = {
+                str(item).strip().casefold()
+                for item in self.telegram_queue_folders
+            }
+            if not self.session_running or folder_key not in queued_keys:
+                raise ValueError(f"Thư mục [{display_name}] không còn nằm trong pipeline đang chạy.")
+            self.skipped_pipeline_folders.add(folder_key)
+            is_current = str(self.active_running_folder or "Mặc định").strip().casefold() == folder_key
+            process = self.process if is_current else None
+
+        self.append_log(f"\n[YÊU CẦU] Bỏ qua thư mục pipeline [{display_name}].\n")
+        if process and process.poll() is None:
+            threading.Thread(
+                target=self._terminate_skipped_process,
+                args=(process, display_name),
+                daemon=True,
+                name="veo3-skip-folder",
+            ).start()
+        return {"ok": True, "folder": folder, "was_active": is_current}
+
+    def _terminate_skipped_process(self, process, folder):
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+                process.wait(timeout=2)
+            except Exception as exc:
+                self.append_log(f"[SKIP] Không thể dừng worker của [{folder}]: {exc}\n")
+        except Exception as exc:
+            if process.poll() is None:
+                self.append_log(f"[SKIP] Không thể dừng worker của [{folder}]: {exc}\n")
+
     def start_automation_chrome(self):
         config = load_json(self.config_path)
         browser = config.get("browser", {})
@@ -3974,6 +4046,8 @@ class AppHandler(BaseHTTPRequestHandler):
             if path == "/api/stop":
                 self.controller.stop()
                 return self.send_json({"ok": True})
+            if path == "/api/skip-pipeline-folder":
+                return self.send_json(self.controller.skip_pipeline_folder(payload))
             if path == "/api/chrome":
                 self.controller.start_automation_chrome()
                 return self.send_json({"ok": True})

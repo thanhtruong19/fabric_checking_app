@@ -596,6 +596,9 @@
     .btn-icon { padding: 4px 7px; font-size: 12px; line-height: 1; }
     .dt-folder-stack { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 7px; }
     .dt-folder-head { display: flex; align-items: center; min-width: 0; }
+    .dt-select-heading, .dt-select-cell { text-align: center !important; }
+    .dt-pipeline-checkbox { width: 17px; height: 17px; flex: 0 0 auto; margin: 0; accent-color: var(--blue); cursor: pointer; }
+    .dt-pipeline-checkbox:disabled { cursor: not-allowed; opacity: .4; }
     .dt-folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text); cursor: pointer; }
     .dt-status-badge { width: 112px; min-height: 30px; padding: 4px 8px; display: inline-flex; align-items: center; justify-content: center; text-align: center; line-height: 1.15; border-radius: 99px; font-size: 11px; box-sizing: border-box; }
     .dt-actions { display: grid; grid-template-columns: 78px 126px 86px 46px 46px; gap: 6px; justify-content: end; align-items: center; }

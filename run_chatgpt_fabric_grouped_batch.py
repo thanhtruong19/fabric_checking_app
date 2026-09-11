@@ -623,6 +623,8 @@ def process_turn(
                 "error_type": None,
                 "output": output_info,
                 "conversation_url": conversation_url,
+                "chat_deleted": False,
+                "chat_cleanup_pending": bool(conversation_url),
                 "completed_at": now_text(),
             }
         )
@@ -687,6 +689,61 @@ def process_turn(
         return False
 
 
+def delete_grouped_conversation(page, status_data, skus):
+    """Delete one completed grouped chat before another conversation is opened."""
+    if not skus:
+        return
+    conversation_url = next(
+        (
+            status_data.get(sku, {}).get("conversation_url")
+            for sku in reversed(skus)
+            if isinstance(status_data.get(sku), dict)
+            and status_data.get(sku, {}).get("conversation_url")
+        ),
+        None,
+    )
+    if not conversation_url:
+        raise RuntimeError(
+            "Grouped fabric outputs were saved, but the conversation URL is missing; "
+            "refusing to open another chat before cleanup is verified."
+        )
+    legacy.delete_automation_chat(
+        page, ", ".join(skus), conversation_url
+    )
+    deleted_at = now_text()
+    for sku in skus:
+        item = status_data.get(sku)
+        if not isinstance(item, dict):
+            continue
+        item.update(
+            {
+                "chat_deleted": True,
+                "chat_cleanup_pending": False,
+                "chat_deleted_at": deleted_at,
+            }
+        )
+        item.pop("conversation_url", None)
+    save_status(status_data)
+    print(f"Deleted grouped ChatGPT fabric chat ({len(skus)} image(s)).")
+
+
+def cleanup_pending_grouped_chats(page, status_data):
+    pending_by_url = {}
+    for sku, item in status_data.items():
+        if (
+            not isinstance(item, dict)
+            or item.get("chat_deleted")
+            or item.get("chat_cleanup_pending") is not True
+        ):
+            continue
+        conversation_url = item.get("conversation_url")
+        if conversation_url:
+            pending_by_url.setdefault(conversation_url, []).append(sku)
+    for skus in pending_by_url.values():
+        print(f"Cleaning pending grouped fabric chat before creating a new one: {', '.join(skus)}")
+        delete_grouped_conversation(page, status_data, skus)
+
+
 def run_batch(args, parser):
     images_per_chat = (
         int(args.images_per_chat)
@@ -748,6 +805,7 @@ def run_batch(args, parser):
             context.set_default_navigation_timeout(60000)
             page = legacy.get_automation_chatgpt_page(context)
             page.bring_to_front()
+            cleanup_pending_grouped_chats(page, status_data)
 
             queue = list(selected_files)
             consecutive_failures = 0
@@ -758,6 +816,7 @@ def run_batch(args, parser):
                 current_batch = queue[:images_per_chat]
                 queue = queue[images_per_chat:]
                 chat_opened = False
+                current_chat_skus = []
 
                 for turn_index, (sku, source_path, folder) in enumerate(current_batch, start=1):
                     target_path = output_path_for(sku, folder)
@@ -840,10 +899,20 @@ def run_batch(args, parser):
                         batch_had_failures = True
                         consecutive_failures += 1
                         if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                            if legacy.is_conversation_url(page.url):
+                                current_chat_skus.append(sku)
+                                status_data[sku]["conversation_url"] = legacy.normalized_url(page.url)
+                                save_status(status_data)
+                            delete_grouped_conversation(page, status_data, current_chat_skus)
                             print(
                                 f"Reached maximum consecutive failures ({MAX_CONSECUTIVE_FAILURES}). Stopping batch."
                             )
                             return
+
+                    if legacy.is_conversation_url(page.url):
+                        current_chat_skus.append(sku)
+                        status_data[sku]["conversation_url"] = legacy.normalized_url(page.url)
+                        save_status(status_data)
 
                     if turn_index < len(current_batch):
                         paced_sleep(
@@ -851,6 +920,7 @@ def run_batch(args, parser):
                             "between fabric swatch turns in the same chat",
                         )
 
+                delete_grouped_conversation(page, status_data, current_chat_skus)
                 if queue:
                     paced_sleep(
                         "between_chats",
