@@ -315,6 +315,13 @@ def select_files(args, parser, status_data):
     discovered = discover_input_files(parser, args.sku)
     if args.sku and not discovered:
         parser.error(f"Source SKU was not found: {args.sku}")
+    if args.sku_file:
+        with open(args.sku_file, "r", encoding="utf-8") as handle:
+            values = json.load(handle)
+        if not isinstance(values, list) or not all(isinstance(value, str) and value for value in values):
+            parser.error("--sku-file must contain a JSON array of non-empty SKU names")
+        selected_skus = {value.casefold() for value in values}
+        discovered = [item for item in discovered if item[0].casefold() in selected_skus]
 
     selected = []
     skipped_ready = 0
@@ -950,6 +957,7 @@ def main():
         description="Batch generate fabric swatches using 02_FABRIC_SWATCH_MASTER.md."
     )
     parser.add_argument("--sku", help="Process only a specific SKU.")
+    parser.add_argument("--sku-file", help="JSON file containing exact SKU names to process.")
     parser.add_argument("--limit", type=int, help="Limit number of SKUs to process.")
     parser.add_argument("--images-per-chat", type=int, help="Number of images per chat.")
     parser.add_argument(

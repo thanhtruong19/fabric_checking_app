@@ -512,11 +512,18 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
     # Collect known folder names from config
     folders_map = {}
     folder_modified_at = {}
+    folder_settings = {}
     for item in configured_urls:
         f_name = str(item.get("folder", "")).strip()
         if f_name:
             folders_map[f_name] = str(item.get("url", "")).strip()
             folder_modified_at[f_name] = str(item.get("modified_at", "")).strip()
+            folder_settings[f_name] = {
+                "images_per_chat": int(item.get("images_per_chat", 10) or 10),
+                "sku": str(item.get("sku", "")).strip(),
+                "limit": str(item.get("limit", "")).strip(),
+                "drive_id": drive_folder_id(item.get("url", "")),
+            }
 
     # Also collect folder names from the sync snapshot if not already mapped.
     # The configured URL list is authoritative: a historical drive_url must not
@@ -682,6 +689,9 @@ def compute_drive_folders_stats(project_dir, config, current_running_folder=None
             "pending_count": pending_count,
             "percent": percent,
             "is_active": is_active,
+            **folder_settings.get(folder_name, {
+                "images_per_chat": 10, "sku": "", "limit": "", "drive_id": ""
+            }),
             "output_path": str(folder_out),
         })
 
@@ -1978,6 +1988,12 @@ class PipelineController:
         output_children = [d.name for d in out_root.iterdir() if d.is_dir()] if safe_is_dir(out_root) else ["chatgpt"]
 
         with self.lock:
+            pipeline_running = self.is_running()
+            queued_pipeline_folders = [
+                folder for folder in self.telegram_queue_folders
+                if folder not in self.telegram_completed_folders
+                and folder.casefold() not in self.skipped_pipeline_folders
+            ]
             return {
                 "project_dir": str(self.project_dir),
                 "python_exe": str(self.python_exe) if self.python_exe else None,
@@ -1990,11 +2006,8 @@ class PipelineController:
                 "drive_sync_recent": folders_stats.get("recent_sync_history", []),
                 "output_subdirectories": output_children,
                 "active_running_folder": self.active_running_folder,
-                "active_pipeline_folders": [
-                    folder for folder in self.telegram_queue_folders
-                    if folder not in self.telegram_completed_folders
-                    and folder.casefold() not in self.skipped_pipeline_folders
-                ],
+                "pipeline_folders": queued_pipeline_folders,
+                "active_pipeline_folders": queued_pipeline_folders if pipeline_running else [],
                 "images_per_chat": images_per_chat,
                 "auto_retry_enabled": bool(app_ui.get("auto_retry_enabled", True)),
                 "auto_retry_delay_seconds": int(app_ui.get("auto_retry_delay_seconds", 120)),
@@ -2015,7 +2028,7 @@ class PipelineController:
                 "quota_alert": quota_alert,
                 "telegram": telegram_state,
                 "status": self.status,
-                "running": self.is_running(),
+                "running": pipeline_running,
                 "log": self.log_text,
             }
 
@@ -2046,6 +2059,13 @@ class PipelineController:
                 if not modified_at:
                     modified_at = existing_modified.get(drive_folder_id(url), "")
                 valid_item = {"url": url, "folder": folder_name}
+                images_per_chat_item = int(item.get("images_per_chat", 10) or 10)
+                if 1 <= images_per_chat_item <= 20:
+                    valid_item["images_per_chat"] = images_per_chat_item
+                if str(item.get("sku", "")).strip():
+                    valid_item["sku"] = str(item.get("sku", "")).strip()
+                if str(item.get("limit", "")).strip():
+                    valid_item["limit"] = str(item.get("limit", "")).strip()
                 if modified_at:
                     valid_item["modified_at"] = modified_at
                 valid_urls.append(valid_item)
@@ -2227,6 +2247,11 @@ class PipelineController:
             common.append("--dry-run")
         force = bool(payload.get("force"))
         engine = str(payload.get("engine", "chatgpt")).strip().lower()
+        source_mode = str(payload.get("source_mode", "drive")).strip().lower()
+        overwrite_sku_file = ""
+        if force and engine == "chatgpt" and source_mode == "drive" and not sku and not sku_file and not limit:
+            safe_folder = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(folder or "root")).strip("._") or "root"
+            overwrite_sku_file = f"logs/google_drive_import/overwrite_skus_{safe_folder}.json"
 
         if engine in {"algo", "algorithm", "cv_algorithm", "fix_seams"}:
             steps = []
@@ -2289,7 +2314,6 @@ class PipelineController:
             return steps
 
         flows = payload.get("flows", {})
-        source_mode = str(payload.get("source_mode", "drive")).strip().lower()
         steps = []
         for step in FLOW_STEPS:
             if not bool(flows.get(step.key)):
@@ -2297,8 +2321,14 @@ class PipelineController:
             if source_mode == "local" and step.key == "import":
                 continue
             arguments = list(common)
+            if overwrite_sku_file and step.key != "import":
+                arguments.extend(("--sku-file", overwrite_sku_file))
             if step.key == "import" and folder and str(folder).strip():
                 arguments.extend(("--folder", str(folder).strip()))
+            if step.key == "import" and force:
+                arguments.append("--force")
+            if step.key == "import" and overwrite_sku_file:
+                arguments.extend(("--write-sku-file", overwrite_sku_file))
             if step.key in {"seamless", "fabric"}:
                 arguments.extend(
                     ("--images-per-chat", str(int(payload.get("images_per_chat", 10))))
@@ -2502,7 +2532,12 @@ class PipelineController:
                     folder_title = folder if folder else "Mặc định (Root)"
                     self.append_log(f"\n--- Đang xử lý thư mục Drive {i+1}/{len(queue)}: [{folder_title}] ---\n")
                     
-                step_payload = {**payload, "sku": item["sku"]} if "sku" in item else payload
+                item_overrides = {
+                    key: item[key]
+                    for key in ("sku", "limit", "images_per_chat")
+                    if key in item and item[key] not in (None, "")
+                }
+                step_payload = {**payload, **item_overrides} if item_overrides else payload
                 steps = self.build_steps(step_payload, folder=folder)
                 
                 for index, (step, arguments) in enumerate(steps, start=1):
@@ -3229,7 +3264,7 @@ class PipelineController:
         }
         engine_label = "Thuật toán CV" if engine in {"algo", "algorithm"} else "Google Flow" if engine in {"flow", "google_flow"} else "ChatGPT"
         self.append_log(f"\n[YÊU CẦU] Chạy riêng thư mục Drive ({engine_label}): [{folder or 'Mặc định'}]\n")
-        self.start_pipeline(run_payload)
+        self.start_pipeline(run_payload, persist_settings=False)
 
     def run_single_sku(self, payload):
         sku = str(payload.get("sku", "")).strip()
@@ -3392,11 +3427,19 @@ class PipelineController:
         folder = str(payload.get("folder", "")).strip()
         url = str(payload.get("url", "")).strip()
         original_folder = str(payload.get("original_folder", folder)).strip()
+        original_drive_id = str(payload.get("original_drive_id", "")).strip()
+        sku = str(payload.get("sku", "")).strip()
+        limit = str(payload.get("limit", "")).strip()
+        images_per_chat = int(payload.get("images_per_chat", 10))
         modified_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         if not folder:
             raise ValueError("Tên thư mục không được để trống.")
         if url and not validate_drive_url(url):
             raise ValueError("Link Google Drive không hợp lệ. Phải có dạng https://drive.google.com/drive/folders/...")
+        if not 1 <= images_per_chat <= 20:
+            raise ValueError("Ảnh mỗi chat phải nằm trong khoảng 1..20.")
+        if limit and (not limit.isdigit() or int(limit) < 1):
+            raise ValueError("Giới hạn phải là số nguyên dương hoặc để trống.")
         
         config_path = self.project_dir / "config.json"
         config = load_json(config_path)
@@ -3408,7 +3451,12 @@ class PipelineController:
         new_folder_id = drive_folder_id(url) if url else ""
         for item in urls:
             item_folder = str(item.get("folder", "")).strip()
-            same_original = item_folder.casefold() == original_folder.casefold()
+            item_drive_id = drive_folder_id(item.get("url", ""))
+            same_original = (
+                item_drive_id == original_drive_id
+                if original_drive_id
+                else item_folder.casefold() == original_folder.casefold()
+            )
             if (
                 original_folder.casefold() != folder.casefold()
                 and item_folder.casefold() == folder.casefold()
@@ -3437,14 +3485,26 @@ class PipelineController:
         new_urls = []
         for item in urls:
             item_folder = str(item.get("folder", "")).strip()
-            if item_folder.casefold() == original_folder.casefold():
+            item_drive_id = drive_folder_id(item.get("url", ""))
+            matches_original = (
+                item_drive_id == original_drive_id
+                if original_drive_id
+                else item_folder.casefold() == original_folder.casefold()
+            )
+            if matches_original:
                 if url:
-                    new_urls.append({"url": url, "folder": folder, "modified_at": modified_at})
+                    new_urls.append({
+                        "url": url, "folder": folder, "modified_at": modified_at,
+                        "sku": sku, "limit": limit, "images_per_chat": images_per_chat,
+                    })
                 found = True
             else:
                 new_urls.append(item)
         if not found and url:
-            new_urls.append({"url": url, "folder": folder, "modified_at": modified_at})
+            new_urls.append({
+                "url": url, "folder": folder, "modified_at": modified_at,
+                "sku": sku, "limit": limit, "images_per_chat": images_per_chat,
+            })
         
         drive["urls"] = new_urls
         if new_urls:

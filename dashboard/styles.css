@@ -362,7 +362,7 @@
     }
     .tab-nav-btn.active .tab-nav-badge { background: rgba(255,255,255,.2); color: #fff; }
     .floating-log-nav {
-      position: fixed; top: 50%; right: 18px; z-index: 900;
+      position: fixed; top: 50%; right: 18px; z-index: 970;
       transform: translateY(-50%); width: 48px; min-width: 48px; max-width: 190px;
       padding: 11px; overflow: hidden; justify-content: center;
       border-color: rgba(56,189,248,.3); opacity: .42;
@@ -594,6 +594,8 @@
     .metric-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
     .badge-unlinked { border: 1px dashed var(--line); color: var(--muted); background: transparent; padding: 2px 7px; border-radius: 99px; font-size: 11px; }
     .btn-icon { padding: 4px 7px; font-size: 12px; line-height: 1; }
+    button.overwrite { color: #fbbf24; border-color: #d97706; background: rgba(217,119,6,.12); }
+    button.overwrite:hover:not(:disabled) { background: rgba(217,119,6,.24); }
     .dt-folder-stack { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 7px; }
     .dt-folder-head { display: flex; align-items: center; min-width: 0; }
     .dt-select-heading, .dt-select-cell { text-align: center !important; }
@@ -601,8 +603,8 @@
     .dt-pipeline-checkbox:disabled { cursor: not-allowed; opacity: .4; }
     .dt-folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--text); cursor: pointer; }
     .dt-status-badge { width: 112px; min-height: 30px; padding: 4px 8px; display: inline-flex; align-items: center; justify-content: center; text-align: center; line-height: 1.15; border-radius: 99px; font-size: 11px; box-sizing: border-box; }
-    .dt-actions { display: grid; grid-template-columns: 78px 126px 86px 46px 46px; gap: 6px; justify-content: end; align-items: center; }
-    .dt-actions-heading { display: grid; grid-template-columns: 78px 126px 86px 46px 46px; gap: 6px; justify-content: end; align-items: center; }
+    .dt-actions { display: grid; grid-template-columns: 78px 126px 86px 76px 82px 46px 46px; gap: 6px; justify-content: end; align-items: center; }
+    .dt-actions-heading { display: grid; grid-template-columns: 78px 126px 86px 76px 82px 46px 46px; gap: 6px; justify-content: end; align-items: center; }
     .dt-actions-heading span { grid-column: 1; text-align: center; }
     .dt-actions button { width: 100%; height: 36px; padding: 6px 8px; white-space: nowrap; }
     .dt-action-placeholder { visibility: hidden; pointer-events: none; }

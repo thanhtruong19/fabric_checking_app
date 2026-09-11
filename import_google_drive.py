@@ -545,6 +545,15 @@ def main():
     parser.add_argument("--sku", help="Import one exact filename stem")
     parser.add_argument("--limit", type=int, help="Import at most this many new images")
     parser.add_argument("--dry-run", action="store_true", help="List remote images without downloading")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Download every selected Drive image again and replace matching local files",
+    )
+    parser.add_argument(
+        "--write-sku-file",
+        help="Write the authoritative Drive SKU list for downstream pipeline steps",
+    )
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
@@ -582,6 +591,9 @@ def main():
     )
     if args.sku:
         images = [entry for entry in images if Path(entry["name"]).stem == args.sku]
+    if args.write_sku_file:
+        sku_file_path = resolve_path(args.write_sku_file)
+        save_status(sku_file_path, [Path(entry["name"]).stem for entry in images])
     if not images:
         print("No matching supported images were found in the shared Drive folder.")
         creation_stats = compute_folder_creation_stats(PROJECT_DIR, folder_name, [])
@@ -608,6 +620,9 @@ def main():
     for entry in images:
         sku_key = Path(entry["name"]).stem.casefold()
         local_matches = existing.get(sku_key, [])
+        if args.force:
+            pending.append(entry)
+            continue
         exact = [path for path in local_matches if path.name.casefold() == entry["name"].casefold()]
         if exact:
             try:
@@ -664,6 +679,11 @@ def main():
             image_info = download_entry(
                 entry, destination, staging_dir, timeout_seconds, retries
             )
+            if args.force:
+                sku_key = Path(entry["name"]).stem.casefold()
+                for previous in existing.get(sku_key, []):
+                    if previous != destination and previous.exists():
+                        previous.unlink()
             downloaded_count += 1
             status[sku] = {
                 "status": "done",

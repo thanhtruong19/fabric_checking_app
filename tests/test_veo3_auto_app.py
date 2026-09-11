@@ -1469,6 +1469,33 @@ class VEO3AutoAppTests(unittest.TestCase):
         self.assertIn("--prompt-file", fabric_args)
         self.assertIn("prompts/fab.md", fabric_args)
 
+        overwrite_payload = {
+            "engine": "chatgpt",
+            "source_mode": "drive",
+            "images_per_chat": 4,
+            "force": True,
+            "flows": {
+                "import": True,
+                "crop": True,
+                "seamless": True,
+                "fabric": True,
+                "package": True,
+            },
+        }
+        overwrite_steps = controller.build_steps(overwrite_payload, folder="NHC")
+        self.assertEqual(
+            [step.key for step, _ in overwrite_steps],
+            ["import", "crop", "seamless", "fabric", "package"],
+        )
+        for _, arguments in overwrite_steps:
+            self.assertIn("--force", arguments)
+        import_arguments = overwrite_steps[0][1]
+        self.assertIn("--write-sku-file", import_arguments)
+        manifest = import_arguments[import_arguments.index("--write-sku-file") + 1]
+        for _, arguments in overwrite_steps[1:]:
+            self.assertIn("--sku-file", arguments)
+            self.assertEqual(arguments[arguments.index("--sku-file") + 1], manifest)
+
         # 2. Google Flow runner steps
         payload_flow = {
             "engine": "flow",
@@ -1820,12 +1847,29 @@ class VEO3AutoAppTests(unittest.TestCase):
             (root / "config.json").write_text(json.dumps({}), encoding="utf-8")
             controller = app.PipelineController()
             controller.project_dir = root
+            controller.worker = MagicMock()
+            controller.worker.is_alive.return_value = True
             controller.telegram_queue_folders = ["DONE", "ACTIVE", "WAITING"]
             controller.telegram_completed_folders = {"DONE"}
 
             state = controller.state()
 
+            self.assertEqual(state["pipeline_folders"], ["ACTIVE", "WAITING"])
             self.assertEqual(state["active_pipeline_folders"], ["ACTIVE", "WAITING"])
+
+    def test_state_preserves_pipeline_folders_after_worker_stops(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config.json").write_text(json.dumps({}), encoding="utf-8")
+            controller = app.PipelineController()
+            controller.project_dir = root
+            controller.telegram_queue_folders = ["CHKK"]
+
+            state = controller.state()
+
+            self.assertFalse(state["running"])
+            self.assertEqual(state["pipeline_folders"], ["CHKK"])
+            self.assertEqual(state["active_pipeline_folders"], [])
 
     def test_pipeline_folder_postcondition_rejects_missing_output(self):
         controller = app.PipelineController.__new__(app.PipelineController)
@@ -2053,7 +2097,10 @@ class VEO3AutoAppTests(unittest.TestCase):
             # 1. Add link for folder
             res = controller.save_drive_link({
                 "folder": "FABRIC_1013",
-                "url": "https://drive.google.com/drive/folders/abcdef123456"
+                "url": "https://drive.google.com/drive/folders/abcdef123456",
+                "sku": "SP1M29",
+                "limit": "5",
+                "images_per_chat": 4,
             })
             self.assertTrue(res["ok"])
             self.assertEqual(res["folder"], "FABRIC_1013")
@@ -2062,21 +2109,29 @@ class VEO3AutoAppTests(unittest.TestCase):
             self.assertEqual(len(saved_cfg["google_drive"]["urls"]), 1)
             self.assertEqual(saved_cfg["google_drive"]["urls"][0]["folder"], "FABRIC_1013")
             self.assertEqual(saved_cfg["google_drive"]["urls"][0]["url"], "https://drive.google.com/drive/folders/abcdef123456")
+            self.assertEqual(saved_cfg["google_drive"]["urls"][0]["images_per_chat"], 4)
+            self.assertEqual(saved_cfg["google_drive"]["urls"][0]["sku"], "SP1M29")
+            self.assertEqual(saved_cfg["google_drive"]["urls"][0]["limit"], "5")
             self.assertEqual(saved_cfg["google_drive"]["share_url"], "https://drive.google.com/drive/folders/abcdef123456")
 
             # 2. Update existing link
             res_update = controller.save_drive_link({
-                "folder": "FABRIC_1013",
-                "url": "https://drive.google.com/drive/folders/new_link_999"
+                "folder": "FABRIC_RENAMED",
+                "url": "https://drive.google.com/drive/folders/new_link_999",
+                "original_folder": "FABRIC_1013",
+                "original_drive_id": "abcdef123456",
+                "images_per_chat": 7,
             })
             self.assertTrue(res_update["ok"])
             saved_cfg = json.loads(config_file.read_text(encoding="utf-8"))
             self.assertEqual(len(saved_cfg["google_drive"]["urls"]), 1)
+            self.assertEqual(saved_cfg["google_drive"]["urls"][0]["folder"], "FABRIC_RENAMED")
             self.assertEqual(saved_cfg["google_drive"]["urls"][0]["url"], "https://drive.google.com/drive/folders/new_link_999")
+            self.assertEqual(saved_cfg["google_drive"]["urls"][0]["images_per_chat"], 7)
 
             # 3. Unlink folder (empty url)
             res_unlink = controller.save_drive_link({
-                "folder": "FABRIC_1013",
+                "folder": "FABRIC_RENAMED",
                 "url": ""
             })
             self.assertTrue(res_unlink["ok"])

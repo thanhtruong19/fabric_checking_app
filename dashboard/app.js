@@ -188,7 +188,9 @@ function renderDriveFolders(statsList, queueList) {
     delBtn.type = 'button';
     delBtn.className = 'danger btn-sm';
     delBtn.innerHTML = '✕';
-    delBtn.title = 'Ẩn khỏi danh sách pipeline đang hiển thị';
+    delBtn.title = pipelineIsRunning
+      ? 'Bỏ qua thư mục này và chuyển sang thư mục tiếp theo'
+      : 'Ẩn thư mục này khỏi Nguồn ảnh vải';
     delBtn.onclick = () => removeDriveFolder(item.folder, item.url);
 
     actions.appendChild(runChatGptBtn);
@@ -260,7 +262,7 @@ function onFolderFilterChange() {
   fetchState();
 }
 
-async function runSingleFolder(folder, url, engine = 'chatgpt') {
+async function runSingleFolder(folder, url, engine = 'chatgpt', imagesPerChat = null, sku = null, limit = null) {
   const label = engine === 'algo' ? 'Thuật toán CV' : engine === 'flow' ? 'Google Flow' : 'ChatGPT';
   if (!confirm(`Chạy pipeline ${label} cho riêng thư mục "${folder || 'Mặc định'}"?`)) return;
   try {
@@ -268,6 +270,9 @@ async function runSingleFolder(folder, url, engine = 'chatgpt') {
     pl.folder = folder || '';
     pl.url = url || '';
     pl.engine = engine;
+    if (imagesPerChat !== null) pl.images_per_chat = Number(imagesPerChat || 10);
+    if (sku !== null) pl.sku = String(sku || '');
+    if (limit !== null) pl.limit = String(limit || '');
     if (engine === 'chatgpt' && !(await prepareSwatchPrerequisites(pl))) return;
     await api('/api/run-folder', pl);
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -286,11 +291,56 @@ async function openFolderDirectory(folder) {
 
 async function removeDriveFolder(folder, url) {
   const name = folder || 'Mặc định';
+  const folderKey = String(name).trim().toLocaleLowerCase('vi');
+  if (!pipelineIsRunning) {
+    if (!confirm(`Ẩn thư mục "${name}" khỏi Nguồn ảnh vải?\n(Link Drive, dữ liệu local và mục trong Quản lý Drive vẫn được giữ nguyên).`)) return;
+    dismissedPipelineFolders.add(folderKey);
+    renderDriveFolders(driveFoldersStats, driveUrlsQueue);
+    return;
+  }
   if (!confirm(`Bỏ qua thư mục "${name}" trong pipeline hiện tại và chuyển sang thư mục tiếp theo?\n(Link Drive, dữ liệu local và mục trong Quản lý Drive vẫn được giữ nguyên).`)) return;
   try {
     await api('/api/skip-pipeline-folder', { folder: folder || '' });
-    dismissedPipelineFolders.add(String(name).trim().toLocaleLowerCase('vi'));
+    dismissedPipelineFolders.add(folderKey);
     renderDriveFolders(driveFoldersStats, driveUrlsQueue);
+  } catch (error) {
+    if (String(error && error.message || error).includes('không còn nằm trong pipeline đang chạy')) {
+      await fetchState();
+      return;
+    }
+    toastError(error);
+  }
+}
+
+async function overwriteDriveFolder(folder, url, imagesPerChat = 10) {
+  const name = folder || 'Mặc định';
+  if (!url) {
+    toastError(`Thư mục "${name}" chưa có link Google Drive để đọc lại dữ liệu gốc.`);
+    return;
+  }
+  if (!confirm(
+    `Ghi đè và tạo lại toàn bộ ảnh của thư mục "${name}"?\n\n` +
+    'Pipeline sẽ tải lại ảnh từ Drive, crop lại, gửi prompt AI tạo Seamless/Swatch và đóng gói lại kết quả.'
+  )) return;
+  try {
+    const pl = payload();
+    pl.folder = folder || '';
+    pl.url = url;
+    pl.engine = 'chatgpt';
+    pl.force = true;
+    pl.images_per_chat = Number(imagesPerChat || 10);
+    pl.sku = '';
+    pl.limit = '';
+    pl.flows = {
+      import: true,
+      crop: true,
+      seamless: true,
+      fabric: true,
+      package: true
+    };
+    await api('/api/run-folder', pl);
+    closeDriveManagementModal();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (error) {
     toastError(error);
   }
@@ -714,7 +764,20 @@ function switchTab(tabId) {
   $('nav-tab-quality').classList.toggle('active', tabId === 'quality');
 }
 
+function closeOtherPrimaryPopups(exceptId) {
+  if (exceptId !== 'drive-management-modal' && !$('drive-management-modal').classList.contains('hidden')) {
+    closeDriveManagementModal();
+  }
+  if (exceptId !== 'tab-logs' && !$('tab-logs').classList.contains('hidden')) {
+    closeLogPopup();
+  }
+  if (exceptId !== 'settings-modal' && !$('settings-modal').classList.contains('hidden')) {
+    closeSettingsModal();
+  }
+}
+
 function openDriveManagementModal() {
+  closeOtherPrimaryPopups('drive-management-modal');
   $('drive-management-modal').classList.remove('hidden');
   $('nav-drive-management').classList.add('active');
   $('nav-drive-management').setAttribute('aria-expanded', 'true');
@@ -727,6 +790,7 @@ function closeDriveManagementModal() {
 }
 
 function openSettingsModal() {
+  closeOtherPrimaryPopups('settings-modal');
   const modal = $('settings-modal');
   // Keep the settings available from every main tab. It starts beside the
   // dashboard markup for readability, then moves outside the tab container.
@@ -752,6 +816,7 @@ document.addEventListener('keydown', event => {
 });
 
 function openLogPopup() {
+  closeOtherPrimaryPopups('tab-logs');
   $('tab-logs').classList.remove('hidden');
   $('nav-tab-logs').classList.add('active');
   $('nav-tab-logs').setAttribute('aria-expanded', 'true');
@@ -1459,8 +1524,10 @@ async function fetchState() {
 
     driveFoldersStats = (s.drive_folders_stats && s.drive_folders_stats.folders) || [];
     hiddenDriveFolders = Array.isArray(s.hidden_drive_folders) ? s.hidden_drive_folders : [];
-    activePipelineFolders = Array.isArray(s.active_pipeline_folders) ? s.active_pipeline_folders : [];
     pipelineIsRunning = Boolean(s.running);
+    activePipelineFolders = Array.isArray(s.pipeline_folders)
+      ? s.pipeline_folders
+      : (Array.isArray(s.active_pipeline_folders) ? s.active_pipeline_folders : []);
     renderDriveFolders(driveFoldersStats, driveUrlsQueue);
     renderDriveManagementSection(s.drive_folders_stats);
     updateFolderFilterSelect(driveFoldersStats);
@@ -1812,6 +1879,8 @@ async function addAuditedFolderToPipeline(url, folder) {
 let currentAuditFolderData = null;
 let currentDriveTableFolders = [];
 let editDriveOriginalFolder = '';
+let editDriveOriginalId = '';
+let editDriveIsExisting = false;
 const selectedDrivePipelineFolders = new Set();
 
 function drivePipelineFolderKey(folder) {
@@ -1832,7 +1901,10 @@ function getDrivePipelineQueue() {
   return targets.map(item => ({
     folder: String(item.folder || '').trim(),
     url: String(item.url || '').trim(),
-    modified_at: String(item.modified_at || '').trim()
+    modified_at: String(item.modified_at || '').trim(),
+    sku: String(item.sku || '').trim(),
+    limit: String(item.limit || '').trim(),
+    images_per_chat: Number(item.images_per_chat || 10)
   }));
 }
 
@@ -1884,7 +1956,7 @@ function filterDriveTable() {
 
   if (!filtered.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="10" style="text-align:center; padding:32px;" class="hint">Không tìm thấy thư mục vải nào phù hợp với bộ lọc.</td>`;
+    tr.innerHTML = `<td colspan="11" style="text-align:center; padding:32px;" class="hint">Không tìm thấy thư mục vải nào phù hợp với bộ lọc.</td>`;
     tbody.appendChild(tr);
     return;
   }
@@ -1940,7 +2012,6 @@ function filterDriveTable() {
       tdUrl.innerHTML = `
         <div class="drive-link-box">
           <a href="${escapeHtml(item.url)}" target="_blank" title="${escapeHtml(item.url)}">🔗 ${escapeHtml(item.url)}</a>
-          <button type="button" class="ghost btn-icon" title="Sửa link Drive" onclick="openEditDriveModal('${escapeHtml(item.folder)}', '${escapeHtml(item.url)}')">✏️</button>
         </div>
       `;
     } else {
@@ -1950,7 +2021,12 @@ function filterDriveTable() {
     }
     tr.appendChild(tdUrl);
 
-    // 4. Drive Images Count
+    // 4. Per-folder ChatGPT conversation size
+    const tdPerChat = document.createElement('td');
+    tdPerChat.innerHTML = `<b>${Number(item.images_per_chat || 10)}</b> ảnh`;
+    tr.appendChild(tdPerChat);
+
+    // 5. Drive Images Count
     const tdDrive = document.createElement('td');
     if (item.drive_total !== undefined && item.drive_total !== null) {
       const timeStr = item.last_sync_at ? `<div class="metric-sub">🕒 ${escapeHtml(item.last_sync_at.split(' ')[1] || item.last_sync_at)}</div>` : '';
@@ -2011,7 +2087,9 @@ function filterDriveTable() {
       <div class="dt-actions">
         <button type="button" class="ghost btn-sm" title="Đối chiếu chi tiết từng SKU" onclick="openFolderSkuAudit('${escapeHtml(item.folder)}', '${escapeHtml(item.url || '')}')">🔍 SKU</button>
         <button type="button" class="ghost btn-sm" style="color:var(--green); border-color:var(--green);" title="Chạy Thuật toán Seamless cho thư mục này" onclick="runSingleFolder('${escapeHtml(item.folder)}', '${escapeHtml(item.url || '')}', 'algo')">⚡ Thuật toán</button>
-        <button type="button" class="primary btn-sm" title="Chạy ChatGPT cho thư mục này" onclick="runSingleFolder('${escapeHtml(item.folder)}', '${escapeHtml(item.url || '')}', 'chatgpt')">▶ Chạy</button>
+        <button type="button" class="primary btn-sm" title="Chạy ChatGPT cho thư mục này" onclick="runSingleFolder('${escapeHtml(item.folder)}', '${escapeHtml(item.url || '')}', 'chatgpt', ${Number(item.images_per_chat || 10)}, '${escapeHtml(item.sku || '')}', '${escapeHtml(item.limit || '')}')">▶ Chạy</button>
+        <button type="button" class="ghost btn-sm" title="Sửa thông tin Google Drive của mẫu vải" onclick="openEditDriveModal('${escapeHtml(item.folder)}', '${escapeHtml(item.url || '')}', ${Number(item.images_per_chat || 10)}, '${escapeHtml(item.sku || '')}', '${escapeHtml(item.limit || '')}')">✏️ Sửa</button>
+        <button type="button" class="overwrite btn-sm" title="Tải lại từ Drive và tạo lại toàn bộ kết quả" onclick="overwriteDriveFolder('${escapeHtml(item.folder)}', '${escapeHtml(item.url || '')}', ${Number(item.images_per_chat || 10)})" ${item.url ? '' : 'disabled'}>♻️ Ghi đè</button>
         <button type="button" class="ghost btn-sm" title="Mở thư mục output trên máy" onclick="openFolderDirectory('${escapeHtml(item.folder)}')">📁</button>
         ${item.url ? `<button type="button" class="danger btn-sm" title="Gỡ link Drive" onclick="unlinkDriveFolder('${escapeHtml(item.folder)}')">🗑️</button>` : `<button type="button" class="danger btn-sm dt-action-placeholder" tabindex="-1" aria-hidden="true">🗑️</button>`}
       </div>
@@ -2026,17 +2104,22 @@ function openAddDriveModal() {
   openEditDriveModal('', '');
 }
 
-function openEditDriveModal(folder, url) {
+function openEditDriveModal(folder, url, imagesPerChat = 10, sku = '', limit = '') {
   editDriveOriginalFolder = String(folder || '').trim();
+  editDriveOriginalId = driveFolderId(url);
+  editDriveIsExisting = Boolean(editDriveOriginalFolder || editDriveOriginalId);
   $('edit-drive-folder').value = folder || '';
   $('edit-drive-url').value = url || '';
-  $('edit-drive-sku').value = $('sku').value || '';
-  $('edit-drive-limit').value = $('limit').value || '';
-  $('edit-drive-perchat').value = $('perchat').value || '10';
+  $('edit-drive-sku').value = sku || '';
+  $('edit-drive-limit').value = limit || '';
+  $('edit-drive-perchat').value = String(imagesPerChat || 10);
   $('edit-drive-message').className = 'edit-drive-message hidden';
   $('edit-drive-message').textContent = '';
   validateEditDriveDuplicates();
-  $('modal-edit-drive-title').textContent = folder ? `🔗 Sửa Link Drive Cho Thư Mục "${folder}"` : '➕ Thêm / Gán Link Google Drive Mới';
+  $('modal-edit-drive-title').textContent = editDriveIsExisting
+    ? '✏️ Sửa thông tin Google Drive của mẫu vải'
+    : '➕ Thêm / Gán Link Google Drive Mới';
+  $('save-drive-link-btn').textContent = editDriveIsExisting ? '✏️ Sửa' : '💾 Lưu liên kết';
   $('modal-edit-drive').classList.remove('hidden');
 }
 
@@ -2137,7 +2220,11 @@ async function saveDriveLinkModal() {
   saveButton.disabled = true;
   saveButton.textContent = '⏳ Đang lưu...';
   try {
-    await api('/api/save-drive-link', { folder, url, original_folder: editDriveOriginalFolder });
+    await api('/api/save-drive-link', {
+      folder, url, sku, limit, images_per_chat: imagesPerChat,
+      original_folder: editDriveOriginalFolder,
+      original_drive_id: editDriveOriginalId
+    });
     $('sku').value = sku;
     $('limit').value = limit;
     $('perchat').value = String(imagesPerChat);
@@ -2148,7 +2235,7 @@ async function saveDriveLinkModal() {
     showError('Không thể lưu link Drive: ' + (err.message || err));
   } finally {
     saveButton.disabled = false;
-    saveButton.textContent = '💾 Lưu liên kết';
+    saveButton.textContent = editDriveIsExisting ? '✏️ Sửa' : '💾 Lưu liên kết';
   }
 }
 
